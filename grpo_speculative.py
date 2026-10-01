@@ -497,10 +497,23 @@ for param in model.draft_model.parameters():
 
 for param in model.target_model.parameters():
     param.requires_grad=False
-for param in model.lm_head.parameters():
-    param.requires_grad=False
+# The EAGLE-3 target-vocabulary head is a view over ``draft_model`` rather
+# than an independent target head.  Freezing its parameters would therefore
+# freeze the entire draft after it was made trainable above.
+if args.draft_backend != 'eagle3':
+    for param in model.lm_head.parameters():
+        param.requires_grad=False
 for param in model.embed_tokens.parameters():
     param.requires_grad=False
+
+draft_trainable_params = sum(
+    parameter.numel()
+    for parameter in model.draft_model.parameters()
+    if parameter.requires_grad
+)
+if is_train_draft and draft_trainable_params == 0:
+    raise RuntimeError('draft training is enabled but the draft has no trainable parameters')
+print(f'Draft trainable params: {draft_trainable_params:,}')
     
 
 lora_config = LoraConfig(
@@ -998,6 +1011,12 @@ def training_eagle3_specforge(model, outputs, prompt_mask, token_budget=None):
     for index, (features, target_hidden, input_ids_row) in enumerate(
         zip(feature_rows, target_rows, token_rows)
     ):
+        # Rollouts are intentionally collected under inference_mode. Clone at
+        # the training boundary so autograd may save these tensors for the
+        # draft-weight backward pass.
+        features = features.detach().clone()
+        target_hidden = target_hidden.detach().clone()
+        input_ids_row = input_ids_row.detach().clone()
         prompt_len = int(prompt_mask[index // repeated_generate_nums].sum().item())
         seq_len = int(input_ids_row.shape[-1])
         loss_mask = torch.zeros((1, seq_len, 1), device=model.device, dtype=torch.float32)
@@ -1023,6 +1042,11 @@ def training_eagle3_specforge(model, outputs, prompt_mask, token_budget=None):
         )
         plosses, acceptance_rates = result[0], result[1]
         loss = torch.stack([item.float() for item in plosses]).sum()
+        if not loss.requires_grad:
+            raise RuntimeError(
+                'EAGLE-3 loss has no gradient path to the draft parameters; '
+                f'draft_trainable_params={draft_trainable_params}'
+            )
         (loss / max(len(feature_rows), 1)).backward()
         total_loss += float(loss.detach().cpu())
         total_acceptance += sum(float(item.detach().cpu()) for item in acceptance_rates)
