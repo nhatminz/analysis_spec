@@ -15,6 +15,7 @@ from transformers import AutoTokenizer,AutoConfig,AutoModelForCausalLM,Generatio
 from helper.modeling_draft import Model
 from helper.rewards import accuracy_reward_func , format_reward_func
 from helper.get_QAs import get_test_QAs , get_train_QAs, get_QAs_from_path, select_train_subset
+from helper.drift_metrics import acceptance_aligned_union_metrics
 from helper.specualtive_generate import speculative_generate
 from helper.eagle3_specforge import Eagle3FastGRPOAdapter
 from policy_lag_analysis import (
@@ -49,7 +50,6 @@ from statistics import mean , stdev
 import pickle
 import importlib.util
 from tqdm.auto import tqdm
-from flashgrpo.models.medusa_heads import acceptance_aligned_union_metrics
 
 def handle_signal(signum, frame):
     print("Received signal, cleaning up...")

@@ -269,6 +269,13 @@ class Eagle3FastGRPOAdapter(nn.Module):
         past_len = 0 if not past_key_values else past_key_values[0][0].shape[-2]
         if position_ids is None:
             position_ids = torch.arange(past_len, past_len + q_len, device=mixed.device).unsqueeze(0)
+        else:
+            # RoPE indexes its cosine/sine tables with position_ids.  Some
+            # legacy FastGRPO prefill paths constructed these ids through a
+            # floating-point zeros tensor, which autocast could turn into
+            # BF16.  Normalize at the adapter boundary so every caller passes
+            # a valid index tensor to SpecForge's compiled rotary helper.
+            position_ids = position_ids.to(device=mixed.device, dtype=torch.long)
         cos, sin = attn.rotary_emb(value, seq_len=past_len + q_len)
         # Import the exact rotary/repeat helpers used by the pinned SpecForge model.
         from specforge.modeling.draft.llama3_eagle import apply_rotary_pos_emb, repeat_kv

@@ -524,8 +524,12 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     past_position_ids=[item.item()-1 for item in position_ids]
 
     position_ids=[torch.concat(
-        [torch.zeros((input_ids.shape[-1]-item)),torch.arange(0,item)],dim=-1)
-                for item in position_ids] 
+        [
+            torch.zeros((input_ids.shape[-1]-item), dtype=torch.long),
+            torch.arange(0, item, dtype=torch.long),
+        ],
+        dim=-1,
+    ) for item in position_ids]
     position_ids=torch.stack(position_ids,dim=0)
 
     padding_positions=[]
