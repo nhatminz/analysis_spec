@@ -7,7 +7,7 @@
   Torch 2.11 CuteDSL compatibility shim, and launch validation accepts
   `2.11.x` or `2.13.x` without replacing the installed CUDA build.
 - Transformers: upstream pins `5.12.1`; capability validation accepts
-  `>=5.9,<6.0` for the offline B200 stack.
+  `>=5.8,<6.0` for the offline B200 stack, including the installed `5.8.1`.
 - SGLang: `0.5.18` (SpecForge dependency, but **not** used for FastGRPO rollout or verification here)
 
 SpecForge source is bundled in `third_party/SpecForge`, including a

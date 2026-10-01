@@ -416,9 +416,9 @@ def main():
                 'policy-lag EAGLE-3 supports validated torch 2.11.x or the '
                 f'upstream 2.13.x lock; found {report.get("torch")}'
             )
-        if not (Version('5.9.0') <= transformers_parsed < Version('6.0.0')):
+        if not (Version('5.8.0') <= transformers_parsed < Version('6.0.0')):
             raise RuntimeError(
-                'policy-lag EAGLE-3 requires transformers >=5.9,<6.0; found '
+                'policy-lag EAGLE-3 requires transformers >=5.8,<6.0; found '
                 f'{report.get("transformers")}'
             )
         if report.get('specforge_commit') != SPECFORGE_COMMIT:

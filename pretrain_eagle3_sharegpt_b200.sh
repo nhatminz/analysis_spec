@@ -146,9 +146,9 @@ if (torch_base.major, torch_base.minor) not in {(2, 11), (2, 13)}:
         "unsupported torch stack: expected a validated 2.11.x or upstream "
         f"2.13.x build, found {torch_version}"
     )
-if not (Version("5.9.0") <= transformers_base < Version("6.0.0")):
+if not (Version("5.8.0") <= transformers_base < Version("6.0.0")):
     raise SystemExit(
-        "unsupported transformers stack: expected >=5.9,<6.0, found "
+        "unsupported transformers stack: expected >=5.8,<6.0, found "
         f"{transformers_version}"
     )
 

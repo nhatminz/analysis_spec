@@ -6,6 +6,8 @@
 # The operational launcher supports the installed torch 2.11.x B200 stack and
 # upstream torch 2.13.x. requirements.txt intentionally uses torch>=2.8 so pip
 # does not replace an existing compatible offline CUDA build.
+# Transformers 5.8.x is accepted by the launcher's concrete API checks; the
+# installed 5.8.1 build does not need to be upgraded offline.
 -r requirements.txt
 matplotlib>=3.7
 pyyaml>=6.0
