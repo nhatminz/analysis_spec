@@ -139,6 +139,7 @@ transformers_version = modules["transformers"].__version__
 sglang_version = getattr(modules["sglang"], "__version__", "unknown")
 torch_base = Version(torch_version.split("+", 1)[0])
 transformers_base = Version(transformers_version.split("+", 1)[0])
+sglang_base = Version(sglang_version.split("+", 1)[0])
 # SpecForge contains an explicit Torch-2.11 CuteDSL compatibility shim. 2.13 is
 # its upstream lockfile version; both stacks exercise the same EAGLE-3 code.
 if (torch_base.major, torch_base.minor) not in {(2, 11), (2, 13)}:
@@ -150,6 +151,11 @@ if not (Version("5.8.0") <= transformers_base < Version("6.0.0")):
     raise SystemExit(
         "unsupported transformers stack: expected >=5.8,<6.0, found "
         f"{transformers_version}"
+    )
+if sglang_base not in {Version("0.5.14"), Version("0.5.18")}:
+    raise SystemExit(
+        "unsupported SGLang stack: expected installed B200 0.5.14 or "
+        f"SpecForge upstream 0.5.18, found {sglang_version}"
     )
 
 # Import the concrete APIs used by EAGLE-3 training and local SGLang feature
@@ -181,8 +187,13 @@ report = {
     "sglang": sglang_version,
     "specforge": getattr(modules["specforge"], "__version__", "vendored"),
     "compatibility_mode": "torch_2_11" if torch_base.minor == 11 else "upstream_lock",
+    "sglang_compatibility_mode": (
+        "b200_0_5_14_adapter" if sglang_base == Version("0.5.14") else "upstream_lock"
+    ),
     "local_specforge_patches": [
-        "lazy_sglang_runtime_context_get_flags_for_dp_disabled_capture"
+        "lazy_sglang_runtime_context_get_flags_for_dp_disabled_capture",
+        "sglang_0_5_14_parallel_state_without_dcp_fields",
+        "sglang_0_5_14_model_runner_and_forward_batch_signatures",
     ],
     "capability_checks": list(capabilities) + ["specforge.offline_capture.sglang_backend"],
 }

@@ -45,12 +45,12 @@ to replace it with the upstream `2.13.0` lock. Before loading the model it
 checks the concrete EAGLE-3, FlexAttention, and SGLang capture APIs and records
 the actual versions in `<run-directory>/dependencies.json`.
 
-The vendored backend includes a narrow compatibility shim for SGLang builds
-that do not expose `sglang.srt.runtime_context.get_flags`. This API is not
-needed by the default DP-attention-disabled feature-capture path. DP attention
-is not silently emulated: enabling it with such a build produces an explicit
-error. The `flash_attn is not found` message is only a warning; SpecForge then
-uses the supported PyTorch FlexAttention backend.
+The vendored backend includes narrow compatibility shims for the installed
+SGLang 0.5.14: it does not require `runtime_context.get_flags` or the newer
+`ParallelState.attn_dcp_*` fields on the default DP/DCP-disabled capture path.
+DP/DCP modes are not silently emulated: requesting an unsupported mode produces
+an explicit error. The `flash_attn is not found` message is only a warning;
+SpecForge then uses the supported PyTorch FlexAttention backend.
 
 For Qwen2.5-7B-Instruct, only change the path:
 

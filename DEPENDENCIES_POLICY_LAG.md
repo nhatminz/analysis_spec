@@ -8,7 +8,11 @@
   `2.11.x` or `2.13.x` without replacing the installed CUDA build.
 - Transformers: upstream pins `5.12.1`; capability validation accepts
   `>=5.8,<6.0` for the offline B200 stack, including the installed `5.8.1`.
-- SGLang: `0.5.18` (SpecForge dependency, but **not** used for FastGRPO rollout or verification here)
+- SGLang: upstream SpecForge pins `0.5.18`; the offline-capture adapter also
+  accepts the installed B200 `0.5.14` exactly. The adapter handles the missing
+  runtime flags/DCP fields and the older `ModelRunner`, `ForwardBatch`, and
+  DP-sync signatures. SGLang is **not** used for FastGRPO rollout or
+  verification here.
 
 SpecForge source is bundled in `third_party/SpecForge`, including a
 `VENDORED_COMMIT` provenance file, so the experiment does not clone or fetch
@@ -28,6 +32,6 @@ SpecForge commit or objective.
 
 The launcher imports the concrete EAGLE-3, FlexAttention, and offline SGLang
 capture APIs before allocating the target model. It writes the actual Python,
-Torch, Transformers, and SGLang versions to each pretrain run's
-`dependencies.json`; this records the deviation from the upstream lock instead
-of pretending the installed Torch version is 2.13.
+Torch, Transformers, and SGLang versions plus local compatibility patches to
+each pretrain run's `dependencies.json`; this records deviations from the
+upstream lock instead of pretending the installed versions match it.

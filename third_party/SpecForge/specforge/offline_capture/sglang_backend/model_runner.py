@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os
 
@@ -31,6 +32,48 @@ logger = logging.getLogger(__name__)
 
 
 class SGLangRunner(ModelRunner):
+
+    def __init__(
+        self,
+        *,
+        model_config,
+        mem_fraction_static,
+        gpu_id,
+        ps,
+        server_args,
+        nccl_port,
+        is_draft_worker=False,
+    ):
+        """Bridge the ModelRunner topology API used by SGLang 0.5.14/0.5.18."""
+        common_kwargs = {
+            "model_config": model_config,
+            "mem_fraction_static": mem_fraction_static,
+            "gpu_id": gpu_id,
+            "server_args": server_args,
+            "nccl_port": nccl_port,
+            "is_draft_worker": is_draft_worker,
+        }
+        model_runner_parameters = inspect.signature(ModelRunner.__init__).parameters
+        if "ps" in model_runner_parameters:
+            super().__init__(ps=ps, **common_kwargs)
+            return
+
+        # SGLang 0.5.14 accepts the topology as individual constructor fields.
+        # Publish ``ps`` before calling super because the base constructor calls
+        # our init_torch_distributed override during initialization.
+        self.ps = ps
+        super().__init__(
+            tp_rank=ps.tp_rank,
+            tp_size=ps.tp_size,
+            moe_ep_rank=ps.moe_ep_rank,
+            moe_ep_size=ps.moe_ep_size,
+            pp_rank=ps.pp_rank,
+            pp_size=ps.pp_size,
+            dp_rank=ps.dp_rank,
+            attn_cp_rank=ps.attn_cp_rank,
+            moe_dp_rank=ps.moe_dp_rank,
+            **common_kwargs,
+        )
 
     def init_torch_distributed(self):
         logger.info("Init torch distributed begin.")

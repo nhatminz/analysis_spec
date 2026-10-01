@@ -12,12 +12,15 @@ website documentation, CI files, and unrelated example assets were omitted;
 the EAGLE-3 architecture, feature extraction, loss, and unrolling code is
 unchanged.
 
-One local runtime compatibility patch is applied in
-`specforge/offline_capture/sglang_backend/patch.py`: the optional
-`sglang.srt.runtime_context.get_flags` API is imported lazily. SGLang builds
-without that API can use the default DP-attention-disabled capture path;
-requesting DP attention still fails explicitly. This patch does not change
-captured tensors or the training algorithm.
+Local runtime compatibility patches are applied in
+`specforge/offline_capture/sglang_backend`: the optional
+`sglang.srt.runtime_context.get_flags` API is imported lazily, and the
+`ParallelState` constructor omits DCP fields on SGLang 0.5.14 where those
+fields do not exist. The offline runner also translates the 0.5.18
+`ModelRunner`/`ForwardBatch` call signatures to their 0.5.14 equivalents.
+These adaptations preserve the rank-0/size-1 topology of the default
+DP/DCP-disabled capture path; requesting unsupported DP/DCP modes still fails
+explicitly. They do not change captured tensors or the training algorithm.
 
 Production launchers use `scripts/generate_eagle3_config.py` to apply those
 same rules to the selected `TARGET_MODEL_PATH`; the checked-in 3B/7B files are

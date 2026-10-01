@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from array import array
 from typing import List, Optional
@@ -44,6 +45,65 @@ _CAPTURE_LAYER_HOOKS = {
     "dflash": ("set_dflash_layers_to_capture",),
     "dspark": ("set_dspark_layers_to_capture", "set_dflash_layers_to_capture"),
 }
+
+
+def _build_parallel_state(
+    *,
+    server_args: ServerArgs,
+    tp_rank: int,
+    attn_tp_rank: int,
+    attn_tp_size: int,
+    attn_cp_rank: int,
+    attn_dp_rank: int,
+    attn_dp_size: int,
+    moe_ep_rank: int,
+    moe_dp_rank: int,
+    gpu_id: int,
+) -> ParallelState:
+    """Build the topology object across SGLang 0.5.14 and 0.5.18.
+
+    Decode-context-parallel fields were added to ``ParallelState`` after
+    0.5.14. Offline feature capture does not enable DCP, so its topology is
+    identically rank 0 / size 1 on releases that expose those fields and the
+    fields must be omitted entirely on older releases.
+    """
+    attn_cp_size = getattr(server_args, "attn_cp_size", 1)
+    state_kwargs = {
+        "tp_rank": tp_rank,
+        "tp_size": server_args.tp_size,
+        "pp_rank": 0,
+        "pp_size": 1,
+        "dp_rank": 0,
+        "dp_size": server_args.dp_size,
+        "attn_tp_rank": attn_tp_rank,
+        "attn_tp_size": attn_tp_size,
+        "attn_cp_rank": attn_cp_rank,
+        "attn_cp_size": attn_cp_size,
+        "attn_dp_rank": attn_dp_rank,
+        "attn_dp_size": attn_dp_size,
+        "moe_ep_rank": moe_ep_rank,
+        "moe_ep_size": server_args.ep_size,
+        "moe_dp_rank": moe_dp_rank,
+        "moe_dp_size": server_args.moe_dp_size,
+        "gpu_id": gpu_id,
+    }
+
+    parallel_state_fields = getattr(ParallelState, "__dataclass_fields__", {})
+    supports_dcp = "attn_dcp_size" in parallel_state_fields
+    dcp_size = getattr(server_args, "dcp_size", 1)
+    if supports_dcp:
+        state_kwargs.update(
+            attn_dcp_rank=tp_rank % dcp_size,
+            attn_dcp_size=dcp_size,
+        )
+    elif dcp_size != 1:
+        raise RuntimeError(
+            "This SGLang ParallelState does not support DCP, but "
+            f"dcp_size={dcp_size} was requested. Disable DCP for offline "
+            "feature capture."
+        )
+
+    return ParallelState(**state_kwargs)
 
 
 class OfflineSGLangCaptureBackend:
@@ -92,25 +152,16 @@ class OfflineSGLangCaptureBackend:
             // (server_args.tp_size // server_args.moe_dp_size // server_args.ep_size)
         )
         gpu_id = torch.get_device_module().current_device()
-        parallel_state = ParallelState(
+        parallel_state = _build_parallel_state(
+            server_args=server_args,
             tp_rank=tp_rank,
-            tp_size=server_args.tp_size,
-            pp_rank=0,
-            pp_size=1,
-            dp_rank=0,
-            dp_size=server_args.dp_size,
             attn_tp_rank=attn_tp_rank,
             attn_tp_size=attn_tp_size,
             attn_cp_rank=attn_cp_rank,
-            attn_cp_size=server_args.attn_cp_size,
-            attn_dcp_rank=tp_rank % server_args.dcp_size,
-            attn_dcp_size=server_args.dcp_size,
             attn_dp_rank=attn_dp_rank,
             attn_dp_size=attn_dp_size,
             moe_ep_rank=moe_ep_rank,
-            moe_ep_size=server_args.ep_size,
             moe_dp_rank=moe_dp_rank,
-            moe_dp_size=server_args.moe_dp_size,
             gpu_id=gpu_id,
         )
         model_config = ModelConfig.from_server_args(server_args)
@@ -166,21 +217,29 @@ class OfflineSGLangCaptureBackend:
 
     def _maybe_prepare_mlp_sync_batch(self, batch: ScheduleBatch) -> None:
         if require_mlp_sync(self.model_runner.server_args):
-            prepare_mlp_sync_batch_raw(
-                batch,
-                model_runner=self.model_runner,
-                dp_size=self.model_runner.server_args.dp_size,
-                attn_tp_size=1,
-                attn_cp_size=getattr(self.model_runner.server_args, "attn_cp_size", 1),
-                tp_group=self.model_runner.tp_group,
-                get_idle_batch=None,
-                disable_cuda_graph=self.model_runner.server_args.disable_cuda_graph,
-                require_mlp_tp_gather=require_mlp_tp_gather(
+            sync_kwargs = {
+                "dp_size": self.model_runner.server_args.dp_size,
+                "attn_tp_size": 1,
+                "attn_cp_size": getattr(
+                    self.model_runner.server_args, "attn_cp_size", 1
+                ),
+                "tp_group": self.model_runner.tp_group,
+                "get_idle_batch": None,
+                "disable_cuda_graph": self.model_runner.server_args.disable_cuda_graph,
+                "require_mlp_tp_gather": require_mlp_tp_gather(
                     self.model_runner.server_args
                 ),
-                disable_overlap_schedule=self.model_runner.server_args.disable_overlap_schedule,
-                offload_tags=set(),
-            )
+                "disable_overlap_schedule": (
+                    self.model_runner.server_args.disable_overlap_schedule
+                ),
+                "offload_tags": set(),
+            }
+            sync_parameters = inspect.signature(
+                prepare_mlp_sync_batch_raw
+            ).parameters
+            if "model_runner" in sync_parameters:
+                sync_kwargs["model_runner"] = self.model_runner
+            prepare_mlp_sync_batch_raw(batch, **sync_kwargs)
 
     @torch.no_grad()
     def _forward_extend(self, reqs: list[Req]):
@@ -207,11 +266,14 @@ class OfflineSGLangCaptureBackend:
             )
             batch.prefill_input_ids_cpu = None
         batch.capture_hidden_mode = CaptureHiddenMode.FULL
+        forward_kwargs = {}
+        forward_parameters = inspect.signature(ForwardBatch.init_new).parameters
+        if "capture_hidden_mode" in forward_parameters:
+            forward_kwargs["capture_hidden_mode"] = CaptureHiddenMode.FULL
+        if "return_hidden_states_before_norm" in forward_parameters:
+            forward_kwargs["return_hidden_states_before_norm"] = False
         forward_batch = ForwardBatch.init_new(
-            batch,
-            self.model_runner,
-            capture_hidden_mode=CaptureHiddenMode.FULL,
-            return_hidden_states_before_norm=False,
+            batch, self.model_runner, **forward_kwargs
         )
         forward_batch.capture_hidden_mode = CaptureHiddenMode.FULL
         output = self.model_runner.forward(forward_batch)
