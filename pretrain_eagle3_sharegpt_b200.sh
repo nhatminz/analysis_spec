@@ -195,6 +195,7 @@ report = {
         "sglang_0_5_14_parallel_state_without_dcp_fields",
         "sglang_0_5_14_model_runner_and_forward_batch_signatures",
         "sglang_0_5_14_req_fill_len_extend_range",
+        "target_head_tied_embedding_fallback",
     ],
     "capability_checks": list(capabilities) + ["specforge.offline_capture.sglang_backend"],
 }
@@ -208,6 +209,9 @@ PY
 
 "$PYTHON_BIN" - "$TARGET_MODEL_PATH/config.json" "$DRAFT_CONFIG" <<'PY'
 import json, sys
+from pathlib import Path
+from specforge.modeling.target.checkpoint import list_checkpoint_keys
+
 target = json.load(open(sys.argv[1], encoding="utf-8"))
 draft = json.load(open(sys.argv[2], encoding="utf-8"))
 checks = ("hidden_size", "intermediate_size", "num_attention_heads", "num_key_value_heads", "vocab_size")
@@ -218,7 +222,26 @@ layers = draft.get("eagle_config", {}).get("eagle_aux_hidden_state_layer_ids")
 expected = [1, target["num_hidden_layers"] // 2 - 1, target["num_hidden_layers"] - 4]
 if layers is not None and layers != expected:
     raise SystemExit(f"EAGLE-3 feature layers mismatch: configured={layers}, expected={expected}")
-print(f"Validated {target['hidden_size']}-wide target/draft config; feature layers={layers or expected}")
+target_dir = Path(sys.argv[1]).parent
+checkpoint_keys = set(list_checkpoint_keys(str(target_dir)))
+lm_head_key = "lm_head.weight"
+embedding_key = "model.embed_tokens.weight"
+text_config = target.get("text_config", target)
+tie_weights = bool(text_config.get("tie_word_embeddings", target.get("tie_word_embeddings", False)))
+if lm_head_key in checkpoint_keys:
+    target_head_source = lm_head_key
+elif tie_weights and embedding_key in checkpoint_keys:
+    target_head_source = embedding_key
+else:
+    raise SystemExit(
+        f"target checkpoint has no usable head: {lm_head_key!r} missing, "
+        f"tie_word_embeddings={tie_weights}, {embedding_key!r} present="
+        f"{embedding_key in checkpoint_keys}"
+    )
+print(
+    f"Validated {target['hidden_size']}-wide target/draft config; "
+    f"feature layers={layers or expected}; target head source={target_head_source}"
+)
 PY
 
 mkdir -p "$CONVERTED_DATA_DIR" "$PRETRAIN_ROOT/logs" "$CHECKPOINT_DIR"

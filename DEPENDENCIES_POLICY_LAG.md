@@ -35,3 +35,8 @@ capture APIs before allocating the target model. It writes the actual Python,
 Torch, Transformers, and SGLang versions plus local compatibility patches to
 each pretrain run's `dependencies.json`; this records deviations from the
 upstream lock instead of pretending the installed versions match it.
+
+For targets with `tie_word_embeddings=true`, the frozen SpecForge target head
+uses the checkpoint's configured embedding tensor when `lm_head.weight` is
+deduplicated from the weight index. This is weight tying, not random or
+reinitialized target supervision.

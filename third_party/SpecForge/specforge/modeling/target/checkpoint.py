@@ -81,10 +81,16 @@ def load_selected_tensors(
             shard_path = os.path.join(checkpoint_dir, shard)
             if not os.path.exists(shard_path):
                 continue
-            with safe_open(shard_path, framework="pt") as f:
-                for key in f.keys():
+            if shard_path.endswith(".safetensors"):
+                with safe_open(shard_path, framework="pt") as f:
+                    for key in f.keys():
+                        if predicate(key):
+                            selected[key] = f.get_tensor(key)
+            else:
+                state = torch.load(shard_path, map_location="cpu", weights_only=True)
+                for key, value in state.items():
                     if predicate(key):
-                        selected[key] = f.get_tensor(key)
+                        selected[key] = value
         return selected
 
     for pattern in ("*.safetensors", "*.bin"):

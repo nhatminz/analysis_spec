@@ -1,16 +1,16 @@
-import glob
-import json
-import os
 from typing import Optional
 
 import torch
 import torch.nn as nn
-from huggingface_hub import snapshot_download
-from safetensors import safe_open
 
+from specforge.modeling.target.checkpoint import (
+    load_tensors_by_keys,
+    resolve_checkpoint_dir,
+)
 from specforge.modeling.target.target_utils import (
     load_target_config,
     target_hidden_size,
+    target_text_config,
     target_vocab_size,
 )
 from specforge.utils import get_local_device, padding
@@ -39,6 +39,7 @@ class TargetHead(nn.Module):
         cls,
         model_path,
         lm_head_key: str = "lm_head.weight",
+        embedding_key: str = "model.embed_tokens.weight",
         cache_dir: Optional[str] = None,
         trust_remote_code: bool = False,
     ) -> "TargetHead":
@@ -50,6 +51,7 @@ class TargetHead(nn.Module):
         target_head.load_weights(
             model_path=model_path,
             lm_head_key=lm_head_key,
+            embedding_key=embedding_key,
             cache_dir=cache_dir,
         )
         target_head.freeze_weights()
@@ -63,38 +65,50 @@ class TargetHead(nn.Module):
         self,
         model_path,
         lm_head_key: str = "lm_head.weight",
+        embedding_key: str = "model.embed_tokens.weight",
         cache_dir: Optional[str] = None,
     ):
-        if os.path.exists(model_path):
-            self.model_path = model_path
-        else:
-            self.model_path = snapshot_download(repo_id=model_path, cache_dir=cache_dir)
-
-        # model_path is a local directory
-        # check if there is file ending with index.json
-        glob_path = os.path.join(self.model_path, "*.index.json")
-        index_json_path = glob.glob(glob_path)
-
-        if len(index_json_path) == 0:
-            raise FileNotFoundError(f"No index.json file found in {self.model_path}")
-        if len(index_json_path) > 1:
-            raise FileNotFoundError(
-                f"Multiple index.json files found in {self.model_path}"
+        self.model_path = resolve_checkpoint_dir(
+            model_path,
+            cache_dir=cache_dir,
+            allow_patterns=["*.json", "*.safetensors", "*.bin"],
+        )
+        text_config = target_text_config(self.config)
+        tie_weights = bool(
+            getattr(
+                text_config,
+                "tie_word_embeddings",
+                getattr(self.config, "tie_word_embeddings", False),
             )
-        index_json_path = index_json_path[0]
+        )
+        candidate_keys = [lm_head_key]
+        if tie_weights and embedding_key != lm_head_key:
+            candidate_keys.append(embedding_key)
+        tensors = load_tensors_by_keys(self.model_path, candidate_keys)
 
-        with open(index_json_path, "r") as f:
-            index_json = json.load(f)
-        ckpt_file = index_json["weight_map"][lm_head_key]
+        resolved_key = lm_head_key
+        if lm_head_key not in tensors:
+            if tie_weights and embedding_key in tensors:
+                resolved_key = embedding_key
+                print(
+                    "Tied target embeddings detected: loading TargetHead from "
+                    f"{embedding_key!r} because {lm_head_key!r} is not stored "
+                    "separately."
+                )
+            else:
+                raise KeyError(
+                    f"Target head tensor {lm_head_key!r} is missing from "
+                    f"{self.model_path!r}; tie_word_embeddings={tie_weights}, "
+                    f"embedding fallback {embedding_key!r} present="
+                    f"{embedding_key in tensors}"
+                )
 
-        if ckpt_file.endswith(".safetensors"):
-            with safe_open(
-                os.path.join(self.model_path, ckpt_file), framework="pt"
-            ) as f:
-                lm_head = f.get_tensor(lm_head_key)
-        else:
-            state_dict = torch.load(os.path.join(self.model_path, ckpt_file))
-            lm_head = state_dict[lm_head_key]
+        lm_head = tensors[resolved_key]
+        if tuple(lm_head.shape) != tuple(self.fc.weight.shape):
+            raise RuntimeError(
+                f"Target head shape mismatch for {resolved_key!r}: expected "
+                f"{tuple(self.fc.weight.shape)}, got {tuple(lm_head.shape)}"
+            )
         self.fc.weight.copy_(lm_head)
 
     def freeze_weights(self):

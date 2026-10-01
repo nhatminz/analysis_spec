@@ -23,6 +23,11 @@ topology of the default DP/DCP-disabled capture path; requesting unsupported
 DP/DCP modes still fails explicitly. They do not change captured tensors or
 the training algorithm.
 
+`TargetHead` also follows the target config's `tie_word_embeddings` contract:
+when a tied checkpoint omits a duplicate `lm_head.weight`, it loads the shared
+`model.embed_tokens.weight` tensor. Untied checkpoints still require an
+explicit LM-head tensor and fail if it is missing.
+
 Production launchers use `scripts/generate_eagle3_config.py` to apply those
 same rules to the selected `TARGET_MODEL_PATH`; the checked-in 3B/7B files are
 reference configurations, not a hard-coded model-size switch.
