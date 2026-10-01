@@ -1,0 +1,8 @@
+# Dependency contract for the EAGLE-3 supervision-lag experiment.
+# FastGRPO source: yedaotian9/FastGRPO@38e252493149072d2c5905f0a47de1d935d7170a
+# SpecForge source is vendored under third_party/SpecForge at commit below.
+# Install that directory with --no-deps in an offline environment; do not ask
+# pip to resolve it from GitHub.
+-r requirements.txt
+matplotlib>=3.7
+pyyaml>=6.0

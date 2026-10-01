@@ -34,6 +34,78 @@ total_draft_time=0
 total_check_time=0
 
 
+def _cache_num_layers(cache):
+    if cache is None:
+        return 0
+    if hasattr(cache, "key_cache"):
+        return len(cache.key_cache)
+    if hasattr(cache, "layers"):
+        return len(cache.layers)
+    return len(cache)
+
+
+def _cache_get_layer(cache, layer_idx):
+    if hasattr(cache, "key_cache"):
+        return cache.key_cache[layer_idx], cache.value_cache[layer_idx]
+    if hasattr(cache, "layers"):
+        layer = cache.layers[layer_idx]
+        for key_name, value_name in (
+            ("keys", "values"),
+            ("key_cache", "value_cache"),
+            ("key_states", "value_states"),
+            ("_keys", "_values"),
+        ):
+            if hasattr(layer, key_name) and hasattr(layer, value_name):
+                return getattr(layer, key_name), getattr(layer, value_name)
+        if isinstance(layer, (tuple, list)) and len(layer) >= 2:
+            return layer[0], layer[1]
+    return cache[layer_idx]
+
+
+def _cache_set_layer(cache, layer_idx, key, value):
+    if hasattr(cache, "key_cache"):
+        cache.key_cache[layer_idx] = key
+        cache.value_cache[layer_idx] = value
+        return
+    if hasattr(cache, "layers"):
+        layer = cache.layers[layer_idx]
+        for key_name, value_name in (
+            ("keys", "values"),
+            ("key_cache", "value_cache"),
+            ("key_states", "value_states"),
+            ("_keys", "_values"),
+        ):
+            if hasattr(layer, key_name) and hasattr(layer, value_name):
+                try:
+                    setattr(layer, key_name, key)
+                    setattr(layer, value_name, value)
+                    return
+                except (AttributeError, RuntimeError):
+                    pass
+        if isinstance(layer, list) and len(layer) >= 2:
+            layer[0] = key
+            layer[1] = value
+            return
+    try:
+        cache[layer_idx] = (key, value)
+        return
+    except TypeError as exc:
+        raise AttributeError(
+            "Unsupported transformers cache layout: cannot set layer key/value tensors"
+        ) from exc
+
+
+def _cache_seq_length(cache):
+    if cache is None:
+        return 0
+    if hasattr(cache, "get_seq_length"):
+        return cache.get_seq_length()
+    if _cache_num_layers(cache) == 0:
+        return 0
+    key, _ = _cache_get_layer(cache, 0)
+    return int(key.shape[-2])
+
+
 def sampling(
     logits, 
     top_k=None, 
@@ -118,15 +190,18 @@ def sampling(
 def get_adaptive_hyperparameters(bsz, verification_capacity,
                                 max_draft_token_length, max_draft_k, max_verification_num,
                                 min_draft_token_length, draft_token_length_c):
-    
-    verification_num = min(math.floor(verification_capacity/bsz), max_verification_num)
+    if bsz <= 0:
+        return 1, 1, 1
+
+    verification_num = max(2, min(math.floor(verification_capacity / bsz), max_verification_num))
 
     draft_token_length = min(math.floor(math.log2(verification_num/draft_token_length_c)), max_draft_token_length)
     draft_token_length = max(draft_token_length, min_draft_token_length)
     
-    draft_k = min(verification_num-1, max_draft_k)
+    draft_k = max(1, min(verification_num-1, max_draft_k))
 
-    draft_total_token = verification_num - 1
+    tree_node_capacity = draft_k + draft_k * draft_k * max(draft_token_length - 1, 0)
+    draft_total_token = min(verification_num - 1, tree_node_capacity)
     
     
     return draft_token_length, draft_k, draft_total_token
@@ -292,6 +367,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         total_input_ids=torch.concat(total_input_ids, dim=-1) # (bsz, node_nums)
         total_position_ids=torch.concat(total_position_ids, dim=1) # (bsz, node_nums)
         confidences=torch.concat(confidences, dim=-1) # (bsz, node_nums)
+        draft_total_token=min(int(draft_total_token), int(confidences.shape[-1]))
         
         chosen_index=torch.topk(confidences, k=draft_total_token, dim=-1)
         chosen_index, _=torch.sort(chosen_index.indices, dim=-1, descending=False)
@@ -337,46 +413,53 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
 
 
     def model_forward(model,input_ids,attention_mask,past_key_values,position_ids=None):
-    
+
         if hasattr(model,'base_model'):
             if hasattr(model.base_model,'model'):
                 model=model.base_model.model
-            
-        inputs_embeds = model.model.embed_tokens(input_ids)
 
-        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+        past_seen_tokens = _cache_seq_length(past_key_values)
         cache_position = torch.arange(
-            past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            past_seen_tokens, past_seen_tokens + input_ids.shape[1], device=input_ids.device
         )
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        hidden_states = inputs_embeds
-
-        position_embeddings = model.model.rotary_emb(hidden_states, position_ids)
-
-        for decoder_layer in model.model.layers[: model.model.config.num_hidden_layers]:
-
-            layer_outputs = decoder_layer(
-                hidden_states,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_value=past_key_values,
-                output_attentions=False,
-                use_cache=True,
-                cache_position=cache_position,
-                position_embeddings=position_embeddings,
-            )
-
-            hidden_states = layer_outputs[0]
-
-        hidden_states = model.model.norm(hidden_states)
-
-        return {
-            'last_hidden_state':hidden_states,
-            'past_key_values':past_key_values
+        # Use the public HF model forward instead of calling decoder layers by hand.
+        # Qwen/Llama RoPE signatures changed across transformers versions; the public
+        # path builds cos/sin with the correct head_dim and still accepts 4D tree masks.
+        eagle_layers = getattr(model, "_fastgrpo_eagle3_capture_layers", None)
+        forward_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "past_key_values": past_key_values,
+            "use_cache": True,
+            "cache_position": cache_position,
+            "output_attentions": False,
+            "output_hidden_states": eagle_layers is not None,
+            "return_dict": True,
         }
+        try:
+            outputs = model.model(**forward_kwargs)
+        except TypeError:
+            forward_kwargs.pop("cache_position", None)
+            outputs = model.model(**forward_kwargs)
+
+        result = {
+            'last_hidden_state': outputs.last_hidden_state,
+            'target_hidden_state': outputs.last_hidden_state,
+            'past_key_values': outputs.past_key_values,
+        }
+        if eagle_layers is not None:
+            # Hugging Face hidden_states[0] is the embedding output, while
+            # SpecForge capture layer ids address decoder layers.
+            result['last_hidden_state'] = torch.cat(
+                [outputs.hidden_states[int(layer_id) + 1] for layer_id in eagle_layers],
+                dim=-1,
+            )
+        return result
 
 
     def get_attention_mask(past_seq_len,q_length,dtype,bsz=1,device='cuda',padding_positions=None):
@@ -416,6 +499,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     start_time=time.time()
     target_past_key_values=DynamicCache()
     avg_acc_length=[0,0]
+    total_accepted_draft_tokens=0
+    total_proposed_draft_tokens=0
     eos_token_id = tokenizer.eos_token_id
     bsz=input_ids.shape[0]
     end_sig=[0]*bsz
@@ -432,6 +517,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     total_target_time, total_draft_time, total_check_time = 0, 0, 0
 
     all_draft_input_states=None
+    all_target_hidden_states=None
     all_draft_input_ids=None
 
     position_ids=[torch.sum(item) for item in attention_mask]
@@ -462,9 +548,11 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         
         target_outputs=model_forward(model.target_model,input_ids=input_ids,attention_mask=attention_mask,
                                 past_key_values=target_past_key_values,position_ids=position_ids)
+        target_past_key_values = target_outputs['past_key_values']
 
         feature_states=target_outputs['last_hidden_state']
-        target_logits=model.target_model.lm_head(target_outputs['last_hidden_state'][:,-1:,:])
+        target_hidden_states=target_outputs['target_hidden_state']
+        target_logits=model.target_model.lm_head(target_hidden_states[:,-1:,:])
     
 
     if statistical_time:
@@ -485,6 +573,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         
     if return_all_draft_input:
         all_draft_input_states=feature_states
+        all_target_hidden_states=target_hidden_states
         all_draft_input_ids=draft_input_ids
 
     if statistical_time:
@@ -538,6 +627,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         
         if return_all_draft_input:
             all_draft_input_states=all_draft_input_states.repeat_interleave(repeated_generate_nums,dim=0)
+            all_target_hidden_states=all_target_hidden_states.repeat_interleave(repeated_generate_nums,dim=0)
             all_draft_input_ids=all_draft_input_ids.repeat_interleave(repeated_generate_nums,dim=0)
             
     draft_token_length, draft_k, draft_total_token = get_adaptive_hyperparameters(bsz, verification_capacity,
@@ -559,10 +649,13 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     past_position_ids_tensor=torch.tensor(past_position_ids, dtype=torch.int16).to(device).long()
     
     draft_input_states_dict={}
+    target_hidden_states_dict={}
     draft_input_ids_dict={}
     generated_sequences_dict={}
     padding_positions_dict={}
     residual_index=[_ for _ in range(bsz)]
+    response_accepted_length_sum=[0 for _ in range(bsz)]
+    response_verification_rounds=[0 for _ in range(bsz)]
         
 
     if statistical_time:
@@ -590,7 +683,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
 
     for token_num in range(1,max_length):
         
-        past_kv_len=target_past_key_values.get_seq_length()
+        past_kv_len=_cache_seq_length(target_past_key_values)
         kv_length=past_kv_len+draft_total_token+1
         q_length=draft_total_token+1
 
@@ -661,9 +754,11 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             
             target_outputs=model_forward(model.target_model,input_ids=next_token_trees,attention_mask=target_attention_mask,
                                             past_key_values=target_past_key_values,position_ids=target_position_ids)
+            target_past_key_values = target_outputs['past_key_values']
             
             feature_states_tree=target_outputs['last_hidden_state']
-            target_outputs_logits=model.target_model.lm_head(feature_states_tree)
+            target_hidden_states_tree=target_outputs['target_hidden_state']
+            target_outputs_logits=model.target_model.lm_head(target_hidden_states_tree)
             
             if do_sample==False:
                 target_next_token_tree=target_outputs_logits.softmax(-1).argmax(-1)
@@ -687,6 +782,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         for idx_tree, tree in enumerate(target_trees):
             
             if end_sig[idx_tree]==0:
+                proposed_draft_tokens=len(trees_chosen_index[idx_tree])
                 cur_next_token=[target_next_token_tree_list[idx_tree][0]]
                 cur_acc_length=1
                 cur_chosen_index=[past_kv_len]
@@ -734,6 +830,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                         acc_length[idx_tree]=cur_idx+1
                         break
                 
+                total_proposed_draft_tokens+=int(proposed_draft_tokens)
+                total_accepted_draft_tokens+=max(int(acc_length[idx_tree])-1, 0)
                 avg_acc_length[0]=avg_acc_length[0]+acc_length[idx_tree]
                 avg_acc_length[1]+=1
                         
@@ -741,6 +839,11 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                 acc_length[idx_tree]=0
 
         max_acc_length=max(acc_length)
+        for active_index, accepted_length in enumerate(acc_length):
+            if accepted_length > 0:
+                original_index = residual_index[active_index]
+                response_accepted_length_sum[original_index] += int(accepted_length)
+                response_verification_rounds[original_index] += 1
         last_valid_index=[max_acc_length-1]*bsz 
 
         for idx_batch in range(bsz):
@@ -807,9 +910,16 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         B,T,D=feature_states_tree.shape
         feature_states_index=feature_states_index.unsqueeze(-1).expand(B,-1,D)
         feature_states=feature_states_tree.gather(dim=1, index=feature_states_index)
+        target_hidden_index = feature_states_index[..., :1].expand(
+            B, feature_states_index.shape[1], target_hidden_states_tree.shape[-1]
+        )
+        target_hidden_states = target_hidden_states_tree.gather(
+            dim=1, index=target_hidden_index
+        )
         
         if return_all_draft_input:
             all_draft_input_states=torch.concat([all_draft_input_states, feature_states], dim=1)
+            all_target_hidden_states=torch.concat([all_target_hidden_states, target_hidden_states], dim=1)
             all_draft_input_ids=torch.concat([all_draft_input_ids, next_token], dim=-1)
             
         generated_sequences=torch.concat([generated_sequences,next_token],dim=-1)
@@ -832,14 +942,15 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
 
                 chosen_index=[chosen_index[_] for _ in range(bsz) if _ != delete_idx]
                 
-                for kv_idx in range(len(target_past_key_values.key_cache)):
-                    key = target_past_key_values.key_cache[kv_idx]
-                    value = target_past_key_values.value_cache[kv_idx]
+                for kv_idx in range(_cache_num_layers(target_past_key_values)):
+                    key, value = _cache_get_layer(target_past_key_values, kv_idx)
                     
-                    target_past_key_values.key_cache[kv_idx]=torch.concat(
-                        [key[:delete_idx], key[delete_idx+1:]], dim=0)
-                    target_past_key_values.value_cache[kv_idx]=torch.concat(
-                        [value[:delete_idx], value[delete_idx+1:]], dim=0)
+                    _cache_set_layer(
+                        target_past_key_values,
+                        kv_idx,
+                        torch.concat([key[:delete_idx], key[delete_idx+1:]], dim=0),
+                        torch.concat([value[:delete_idx], value[delete_idx+1:]], dim=0),
+                    )
                 
                 new_past_key_values=[]
                 for cur_past_key_values in draft_past_key_values:
@@ -856,6 +967,9 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                 target_next_token=torch.concat([target_next_token[:delete_idx], target_next_token[delete_idx+1:]], dim=0)
                 
                 feature_states=torch.concat([feature_states[:delete_idx], feature_states[delete_idx+1:]], dim=0)
+                target_hidden_states=torch.concat(
+                    [target_hidden_states[:delete_idx], target_hidden_states[delete_idx+1:]], dim=0
+                )
                 last_valid_index=torch.concat([last_valid_index[:delete_idx], last_valid_index[delete_idx+1:]], dim=0)
                 
                 padding_positions_dict[str(ori_idx)]=padding_positions[delete_idx]
@@ -869,8 +983,11 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                 
                 if return_all_draft_input:
                     draft_input_states_dict[str(ori_idx)]=all_draft_input_states[delete_idx]
+                    target_hidden_states_dict[str(ori_idx)]=all_target_hidden_states[delete_idx]
                     all_draft_input_states=torch.concat(
                         [all_draft_input_states[:delete_idx], all_draft_input_states[delete_idx+1:]], dim=0)
+                    all_target_hidden_states=torch.concat(
+                        [all_target_hidden_states[:delete_idx], all_target_hidden_states[delete_idx+1:]], dim=0)
                     
                     draft_input_ids_dict[str(ori_idx)]=all_draft_input_ids[delete_idx]
                     all_draft_input_ids=torch.concat(
@@ -903,7 +1020,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         for idx_batch in range(bsz):
             chosen_index[idx_batch]=[x for x in range(past_kv_len)]+chosen_index[idx_batch] 
 
-        prefix_length=target_past_key_values.get_seq_length()
+        prefix_length=_cache_seq_length(target_past_key_values)
         for idx_batch in range(len(chosen_index)):
             the_prefix_length=0
             
@@ -922,8 +1039,16 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             chosen_index=[[x-prefix_length for x in item[prefix_length:]] for item in chosen_index]
             chosen_index=torch.tensor(chosen_index,device=device)
             
-            target_past_key_tensor=torch.stack(target_past_key_values.key_cache, dim=0)
-            target_past_value_tensor=torch.stack(target_past_key_values.value_cache, dim=0)
+            target_past_key_tensor=torch.stack(
+                [_cache_get_layer(target_past_key_values, idx_layer)[0]
+                 for idx_layer in range(_cache_num_layers(target_past_key_values))],
+                dim=0,
+            )
+            target_past_value_tensor=torch.stack(
+                [_cache_get_layer(target_past_key_values, idx_layer)[1]
+                 for idx_layer in range(_cache_num_layers(target_past_key_values))],
+                dim=0,
+            )
             
             L, B, H, T, D = target_past_key_tensor.shape
             index_expanded = chosen_index.unsqueeze(1).unsqueeze(-1).unsqueeze(0) # shape: (1, B, 1, S, 1)
@@ -942,14 +1067,13 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             new_value=torch.concat([prefix_value,suffix_value],dim=-2)
         
             for idx_L in range(L):
-                target_past_key_values.key_cache[idx_L] = new_key[idx_L]
-                target_past_key_values.value_cache[idx_L] = new_value[idx_L]
+                _cache_set_layer(target_past_key_values, idx_L, new_key[idx_L], new_value[idx_L])
                 
         draft_attention_mask=get_attention_mask(draft_past_key_values[0][0].shape[-2], max_acc_length,
                                                 model.dtype, bsz, padding_positions=padding_positions_tensor)
         draft_position_ids=[[] for _ in range(bsz)]
         
-        assert target_past_key_values.get_seq_length()==draft_past_key_values[0][0].shape[-2]+max_acc_length
+        assert _cache_seq_length(target_past_key_values)==draft_past_key_values[0][0].shape[-2]+max_acc_length
         
         draft_position_ids=[[] for _ in range(bsz)]
         
@@ -1020,6 +1144,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         
         if return_all_draft_input:
             draft_input_states_dict[str(ori_idx)]=all_draft_input_states[delete_idx]
+            target_hidden_states_dict[str(ori_idx)]=all_target_hidden_states[delete_idx]
             draft_input_ids_dict[str(ori_idx)]=all_draft_input_ids[delete_idx]
         
     bsz=len(generated_sequences_dict)
@@ -1027,11 +1152,13 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     if return_all_draft_input:
 
         all_draft_input_states_without_padding=[]
+        all_target_hidden_states_without_padding=[]
         all_draft_input_ids_without_padding=[]
         
         for idx_batch in range(bsz):
             chosen_index=[]
             cur_draft_input_states=draft_input_states_dict[str(idx_batch)]
+            cur_target_hidden_states=target_hidden_states_dict[str(idx_batch)]
             cur_draft_input_ids=draft_input_ids_dict[str(idx_batch)]
             
             for index in range(cur_draft_input_ids.shape[-1]):
@@ -1039,9 +1166,11 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                     chosen_index.append(index)
                     
             all_draft_input_states_without_padding.append(cur_draft_input_states[chosen_index,:])
+            all_target_hidden_states_without_padding.append(cur_target_hidden_states[chosen_index,:])
             all_draft_input_ids_without_padding.append(cur_draft_input_ids[chosen_index])
             
         all_draft_input_states=all_draft_input_states_without_padding
+        all_target_hidden_states=all_target_hidden_states_without_padding
         all_draft_input_ids=all_draft_input_ids_without_padding
             
     new_padding_positions=[[] for _ in range(bsz)]
@@ -1080,12 +1209,20 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         filtered_generated_token_ids.append(sequence_without_padding)
         max_sequence_length=max(max_sequence_length,len(sequence_without_padding))
 
+    draft_acceptance_rate = total_accepted_draft_tokens / max(total_proposed_draft_tokens, 1)
+
     return {
         'generated_token_ids':filtered_generated_token_ids,
         'max_sequence_length':max_sequence_length,
         'total_acc_length':avg_acc_length[0],
         'total_acc':max_sequence_length/token_num,
         'total_decoded_token_num':avg_acc_length[1],
+        'total_accepted_draft_tokens':total_accepted_draft_tokens,
+        'total_proposed_draft_tokens':total_proposed_draft_tokens,
+        'total_accepted_medusa_tokens':total_accepted_draft_tokens,
+        'total_proposed_medusa_tokens':total_proposed_draft_tokens,
+        'draft_acceptance_rate':draft_acceptance_rate,
+        'medusa_acceptance_rate':draft_acceptance_rate,
         'total_time_cost':time.time()-start_time,
         'target_time_cost':total_target_time,
         'draft_time_cost':total_draft_time,
@@ -1093,6 +1230,9 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         'prefill_time_cost':total_prefill_time,
         'post_time_cost':time.time()-post_time_start,
         'all_draft_input_states':all_draft_input_states,
-        'all_draft_input_ids':all_draft_input_ids
+        'all_target_hidden_states':all_target_hidden_states,
+        'all_draft_input_ids':all_draft_input_ids,
+        'response_accepted_length_sum':response_accepted_length_sum,
+        'response_verification_rounds':response_verification_rounds,
+        'response_generated_tokens':[len(item) for item in filtered_generated_token_ids],
     }
-    

@@ -1,0 +1,100 @@
+# B200 offline: ShareGPT EAGLE-3 pretrain → DAPO policy-lag analysis
+
+This folder is self-contained with respect to project source code.  It vendors
+`sgl-project/SpecForge@3cb0510f0bd0e8c195ac6e9c5c62f6b50580ff83` under
+`third_party/SpecForge`; the B200 machine does not need Git or Internet access.
+CUDA/PyTorch/SGLang binaries are not vendored: the offline image must already
+provide the versions in `DEPENDENCIES_POLICY_LAG.md` (or an administrator must
+provide a local wheelhouse).
+
+Expected placement:
+
+```text
+/workspace/storage-shared/nlp/minhpn19/
+├── fastgrpo/                         # this entire folder
+└── data/
+    ├── sharegpt/ShareGPT_V4.3_unfiltered_cleaned_split.json
+    └── DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet
+```
+
+The default target remains
+`/workspace/storage-shared/models/Qwen2.5-7B-Instruct`. Override
+`TARGET_MODEL_PATH` if the same checkpoint is mounted elsewhere.
+
+## Commands
+
+Activate the preinstalled Python 3.11 environment, then run both stages:
+
+```bash
+cd /workspace/storage-shared/nlp/minhpn19/fastgrpo
+PYTHON_BIN="$(command -v python)" bash run_b200_policy_lag_pipeline.sh
+```
+
+Or run separately:
+
+```bash
+PYTHON_BIN="$(command -v python)" bash pretrain_eagle3_sharegpt_b200.sh
+PYTHON_BIN="$(command -v python)" bash run_policy_lag_analysis_b200.sh
+```
+
+The first command converts the local ShareGPT JSON, captures the exact
+SpecForge EAGLE-3 teacher tensors, creates one fixed vocabulary mapping, and
+trains one epoch. It uses explicit random initialization by default. To warm
+start instead, set both `DRAFT_INITIALIZATION_MODE=pretrained` and
+`INITIAL_DRAFT_CHECKPOINT=/absolute/local/checkpoint`.
+
+The second command deterministically shuffles the English DAPO parquet with
+seed 42, uses exactly 5,000 rows as the GRPO/analysis training pool, and takes
+512 different rows as the held-out pool. Sixteen held-out prompts are evaluated
+per boundary by default; set `EVAL_PROMPTS` up to 512 to change this without
+allowing train/eval overlap.
+
+Useful B200 overrides:
+
+```bash
+CAPTURE_CUDA_VISIBLE_DEVICES=0,1 \
+CAPTURE_NPROC_PER_NODE=2 \
+TRAIN_CUDA_VISIBLE_DEVICES=2 \
+CUDA_VISIBLE_DEVICES=3 \
+PYTHON_BIN="$(command -v python)" \
+bash run_b200_policy_lag_pipeline.sh
+```
+
+Feature capture can use multiple data-parallel workers. The SpecForge trainer
+can also use multiple GPUs by setting matching `TRAIN_CUDA_VISIBLE_DEVICES` and
+`PRETRAIN_NPROC_PER_NODE`. FastGRPO rollout/verification remains the upstream
+single-process decoder and therefore intentionally uses one GPU.
+
+## Outputs
+
+SpecForge pretraining:
+
+```text
+/workspace/storage-shared/nlp/minhpn19/outputs/specforge/qwen25_7b_sharegpt_1ep/
+├── data/sharegpt_train.jsonl
+├── features/
+│   ├── **/*.ckpt
+│   ├── vocab_mapping/vocab_mapping.pt
+│   └── capture_complete.json
+├── checkpoints/
+│   ├── qwen25-7b-eagle3-sharegpt-1ep-step<N>/
+│   ├── qwen25-7b-eagle3-sharegpt-1ep-latest
+│   └── pretrain_complete.json
+└── logs/{capture.log,train.log}
+```
+
+DAPO split and policy-lag results:
+
+```text
+/workspace/storage-shared/nlp/minhpn19/outputs/fastgrpo/policy_lag/
+├── dapo_math_seed42/{train.jsonl,eval.jsonl,split_manifest.json}
+└── qwen25_7b_dapo5k/
+    ├── analysis/{per_response.jsonl,summary.jsonl,summary.csv,aal_policy_lag.png}
+    ├── analysis/boundaries/step_*/{phi_base.pt,draft_stale.pt,draft_fresh.pt,complete.json}
+    ├── checkpoints/latest.pt
+    └── logs/{console.log,train.jsonl,summary.json,summary.txt}
+```
+
+Successful stages are reused. `RESUME_PRETRAIN=true`, `RESUME=true`, and
+`ANALYSIS_RESUME=true` are defaults. Use a new output directory for a genuinely
+new experiment instead of overwriting an existing run.

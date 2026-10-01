@@ -1,3 +1,10 @@
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import pandas as pd
 from transformers import AutoTokenizer, AutoProcessor,AutoConfig,AutoModelForCausalLM
 from helper.modeling_draft import Model
@@ -9,7 +16,7 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from torch import nn
 import time
-from pathlib import Path
+import importlib.util
 
 from torch.utils.data import DataLoader, Dataset, Sampler
 import numpy as np
@@ -22,7 +29,6 @@ import json
 import pandas as pd
 import re
 import signal
-import sys
 import torch
 import argparse
 
@@ -38,20 +44,132 @@ signal.signal(signal.SIGTERM, handle_signal)
 signal.signal(signal.SIGINT, handle_signal)
 
 
+def _dtype_from_name(name):
+    name = str(name or "auto").lower()
+    if name == "auto":
+        return "auto"
+    if name == "bf16":
+        return torch.bfloat16
+    if name == "fp16":
+        return torch.float16
+    if name == "fp32":
+        return torch.float32
+    raise ValueError(f"Unsupported dtype={name}")
+
+
+def _resolve_attn_implementation(requested):
+    requested = str(requested or "")
+    if not requested:
+        return None
+    if requested == "flash_attention_2" and importlib.util.find_spec("flash_attn") is None:
+        print(
+            "Warning: attn_implementation=flash_attention_2 was requested, "
+            "but flash_attn is not installed. Falling back to eager."
+        )
+        return "eager"
+    return requested
+
+
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+
+def _atomic_torch_save(state, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(path.name + ".tmp")
+    torch.save(state, tmp_path)
+    os.replace(tmp_path, path)
+
+
+def _prune_checkpoints(checkpoint_dir, keep_last):
+    keep_last = int(keep_last or 0)
+    if keep_last <= 0:
+        return
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoints = sorted(checkpoint_dir.glob("step*.pt"), key=lambda p: p.stat().st_mtime)
+    for old_path in checkpoints[:-keep_last]:
+        old_path.unlink(missing_ok=True)
+
+
+def save_training_checkpoint(
+    checkpoint_dir,
+    *,
+    model,
+    optimizer,
+    lr_scheduler,
+    epoch,
+    next_batch,
+    step,
+    accumulated_step,
+    total_correct_top1,
+    total_correct_topk,
+    total_token_nums,
+    batch_logs,
+    keep_last,
+):
+    checkpoint_dir = Path(checkpoint_dir)
+    state = {
+        "format": "fastgrpo_draft_checkpoint_v1",
+        "epoch": int(epoch),
+        "next_batch": int(next_batch),
+        "step": int(step),
+        "accumulated_step": int(accumulated_step),
+        "draft_model": model.draft_model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "lr_scheduler": lr_scheduler.state_dict(),
+        "total_correct_top1": list(total_correct_top1),
+        "total_correct_topk": list(total_correct_topk),
+        "total_token_nums": list(total_token_nums),
+        "batch_logs": list(batch_logs),
+        "rng_state": torch.random.get_rng_state(),
+        "cuda_rng_state_all": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+    }
+    checkpoint_path = checkpoint_dir / f"step{int(step)}_epoch{int(epoch) + 1}_batch{int(next_batch)}.pt"
+    _atomic_torch_save(state, checkpoint_path)
+    _atomic_torch_save(state, checkpoint_dir / "latest.pt")
+    _prune_checkpoints(checkpoint_dir, keep_last)
+    print(f"Saved draft checkpoint: {checkpoint_path}")
+    return checkpoint_path
+
+
+def load_training_checkpoint(path, *, model, optimizer, lr_scheduler):
+    checkpoint = torch.load(path, map_location="cpu")
+    model.draft_model.load_state_dict(checkpoint["draft_model"])
+    optimizer.load_state_dict(checkpoint["optimizer"])
+    lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+    if checkpoint.get("rng_state") is not None:
+        torch.random.set_rng_state(checkpoint["rng_state"])
+    if torch.cuda.is_available() and checkpoint.get("cuda_rng_state_all") is not None:
+        torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state_all"])
+    return checkpoint
+
+
 
 parser = argparse.ArgumentParser(description="Training configuration") 
 parser.add_argument('--model_dir',type=str,) 
 parser.add_argument('--version_name', type=str,help='Version name for saving checkpoints')
 parser.add_argument('--model_type',type=str,default='qwen2')
+parser.add_argument('--dtype', type=str, default='auto', choices=['auto', 'bf16', 'fp16', 'fp32'])
+parser.add_argument('--attn_implementation', type=str, default='')
 parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--num_epochs', type=int, default=10)
 parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--accumulation_steps', type=int, default=16)
 parser.add_argument('--warmup_ratio', type=float, default=0.05)
 parser.add_argument('--sample_num', type=int, default=200)
+parser.add_argument('--max_seq_len', type=int, default=4096)
+parser.add_argument('--num_workers', type=int, default=4)
+parser.add_argument('--persistent_workers', default=True)
 parser.add_argument('--log_dir',type=str,required=True)
 parser.add_argument('--saved_model_dir',type=str,required=True)
 parser.add_argument('--dataset_dir',type=str,required=True)
+parser.add_argument('--checkpoint_dir', type=str, default='')
+parser.add_argument('--save_checkpoint_steps', type=int, default=0)
+parser.add_argument('--keep_last_checkpoints', type=int, default=3)
+parser.add_argument('--resume_checkpoint', type=str, default='')
 
 args = parser.parse_args()
 model_dir=args.model_dir
@@ -62,14 +180,25 @@ lr = args.lr
 accumulation_steps = args.accumulation_steps
 warmup_ratio = args.warmup_ratio
 sample_num = args.sample_num
+max_seq_len = args.max_seq_len
+num_workers = args.num_workers
+persistent_workers = _as_bool(args.persistent_workers)
 log_dir=args.log_dir
 saved_model_dir=args.saved_model_dir
 dataset_dir = args.dataset_dir
+checkpoint_dir = args.checkpoint_dir or os.path.join(saved_model_dir, "checkpoints")
+save_checkpoint_steps = int(args.save_checkpoint_steps or 0)
+keep_last_checkpoints = int(args.keep_last_checkpoints or 0)
+resume_checkpoint = args.resume_checkpoint
+model_torch_dtype = _dtype_from_name(args.dtype)
+attn_impl = _resolve_attn_implementation(args.attn_implementation)
 
 if not os.path.exists(saved_model_dir):
     os.makedirs(saved_model_dir)
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
+if checkpoint_dir:
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
 print(version_name,os.getenv('CUDA_VISIBLE_DEVICES'))
 
@@ -79,14 +208,19 @@ df=pd.DataFrame(sharegpt_dataset)
 dataset=datasets.Dataset.from_pandas(df)
 print(dataset)
 
-config=AutoConfig.from_pretrained(model_dir)
+target_config=AutoConfig.from_pretrained(model_dir)
+if model_torch_dtype != "auto":
+    target_config.torch_dtype = model_torch_dtype
 model_type=args.model_type
 target_model = AutoModelForCausalLM.from_pretrained(
-    model_dir, torch_dtype='auto',config=config)
+    model_dir, torch_dtype=model_torch_dtype, config=target_config, attn_implementation=attn_impl)
 target_model.eval()
 
+config=AutoConfig.from_pretrained(model_dir)
 config.rope_scaling=None
 config.num_hidden_layers=1
+if model_torch_dtype != "auto":
+    config.torch_dtype = model_torch_dtype
 model=Model(config, target_model=target_model).cuda()
 tokenizer = AutoTokenizer.from_pretrained(model_dir, padding_side = "right")
 
@@ -179,8 +313,16 @@ class DataCollator:
         }
 
 
-datacollator=DataCollator(tokenizer)
-dataloader=DataLoader(dataset,collate_fn=datacollator,num_workers=4,persistent_workers=True,batch_size=batch_size,shuffle=True,drop_last=False)
+datacollator=DataCollator(tokenizer, max_length=max_seq_len)
+dataloader=DataLoader(
+    dataset,
+    collate_fn=datacollator,
+    num_workers=num_workers,
+    persistent_workers=persistent_workers and num_workers > 0,
+    batch_size=batch_size,
+    shuffle=True,
+    drop_last=False,
+)
 
 
 def compute_acc(target_logits,draft_logits,valid_positions,k=2):
@@ -230,20 +372,57 @@ step=0
 accumulated_step=0
 batch_logs=[]
 start_time=time.time()
+start_epoch = 0
+start_batch = 0
+last_checkpoint_step = -1
 
-for epoch in range(num_epochs):
+if resume_checkpoint:
+    checkpoint = load_training_checkpoint(
+        resume_checkpoint,
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+    )
+    step = int(checkpoint.get("step", 0))
+    accumulated_step = int(checkpoint.get("accumulated_step", step * accumulation_steps))
+    total_correct_top1 = list(checkpoint.get("total_correct_top1", []))
+    total_correct_topk = list(checkpoint.get("total_correct_topk", []))
+    total_token_nums = list(checkpoint.get("total_token_nums", []))
+    batch_logs = list(checkpoint.get("batch_logs", []))
+    start_epoch = int(checkpoint.get("epoch", 0))
+    start_batch = int(checkpoint.get("next_batch", 0))
+    last_checkpoint_step = step
+    print(
+        f"Resumed draft checkpoint {resume_checkpoint}: "
+        f"epoch={start_epoch + 1}, next_batch={start_batch}, step={step}"
+    )
+
+epoch_bar = tqdm(range(start_epoch, num_epochs), desc="Draft epoch", dynamic_ncols=True)
+for epoch in epoch_bar:
 
     log_file = log_dir + f"/epoch_{epoch}.log"
-    with open(log_file,'w',encoding='utf-8') as f:
+    log_mode = "a" if resume_checkpoint and epoch == start_epoch else "w"
+    with open(log_file, log_mode, encoding='utf-8') as f:
         pass
 
-    for i,batch in enumerate(dataloader):
+    batch_bar = tqdm(
+        dataloader,
+        total=len(dataloader),
+        desc=f"Draft epoch {epoch + 1}/{num_epochs}",
+        dynamic_ncols=True,
+        leave=False,
+    )
+    for i,batch in enumerate(batch_bar):
+        if epoch == start_epoch and i < start_batch:
+            batch_bar.set_postfix(step=step, phase="resume_skip", refresh=False)
+            continue
 
         input_ids=batch['input_ids'].to('cuda')
         attention_mask=batch['attention_mask'].to('cuda')
         loss_mask=batch['loss_mask'].to('cuda')
         
         if not torch.any(loss_mask==1):
+            batch_bar.set_postfix(step=step, phase="skip_empty_mask", refresh=False)
             continue
         
         with torch.no_grad():
@@ -355,6 +534,16 @@ for epoch in range(num_epochs):
                 with open(log_file, 'a', encoding='utf-8') as f:
                     f.write(json.dumps(avg_logs) + '\n')
 
+                postfix = {
+                    "step": step,
+                    "loss": avg_logs["loss"],
+                    "top1": avg_logs["top1_acc"],
+                    "topk": avg_logs["topk_acc"],
+                    "lr": f"{lr_scheduler.get_last_lr()[0]:.2e}",
+                }
+                batch_bar.set_postfix(postfix, refresh=False)
+                epoch_bar.set_postfix(postfix, refresh=False)
+
                 total_correct_top1=total_correct_top1[-real_sample_num:]
                 total_correct_topk=total_correct_topk[-real_sample_num:]
                 total_token_nums=total_token_nums[-real_sample_num:]
@@ -367,9 +556,48 @@ for epoch in range(num_epochs):
                 
                 if step%8000==0 and step!=0:
                     model.save_model(f'{saved_model_dir}/step{step}.pth')
+
+                if (
+                    save_checkpoint_steps > 0
+                    and step > 0
+                    and step % save_checkpoint_steps == 0
+                    and step != last_checkpoint_step
+                ):
+                    save_training_checkpoint(
+                        checkpoint_dir,
+                        model=model,
+                        optimizer=optimizer,
+                        lr_scheduler=lr_scheduler,
+                        epoch=epoch,
+                        next_batch=i + 1,
+                        step=step,
+                        accumulated_step=accumulated_step,
+                        total_correct_top1=total_correct_top1,
+                        total_correct_topk=total_correct_topk,
+                        total_token_nums=total_token_nums,
+                        batch_logs=batch_logs,
+                        keep_last=keep_last_checkpoints,
+                    )
+                    last_checkpoint_step = step
                 
                 if (step*accumulation_steps)%16==0:
                     torch.cuda.empty_cache()
     
 
-model.save_model(f'{saved_model_dir}/step{step}.pth')  
+model.save_model(f'{saved_model_dir}/step{step}.pth')
+if checkpoint_dir:
+    save_training_checkpoint(
+        checkpoint_dir,
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        epoch=num_epochs,
+        next_batch=0,
+        step=step,
+        accumulated_step=accumulated_step,
+        total_correct_top1=total_correct_top1,
+        total_correct_topk=total_correct_topk,
+        total_token_nums=total_token_nums,
+        batch_logs=batch_logs,
+        keep_last=keep_last_checkpoints,
+    )

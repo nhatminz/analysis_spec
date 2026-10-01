@@ -3,6 +3,7 @@ import pandas as pd
 import math
 import json
 import os
+import random
 dir_key = "uids1103/data"
 
 prompt_dict = {
@@ -41,7 +42,87 @@ class DataCollator:
         }
 
 info = {"amc-23" : "math" , "gsm8k" : "math" , "math-500" : "math" , "simplelr_qwen_level3to5" : "math" ,
-        "simplelr_abel_level3to5" : "math" , "DAPO-math" : "math"}
+        "simplelr_abel_level3to5" : "math" , "simplelr_abel_level3to5_smoke" : "math" , "DAPO-math" : "math"}
+
+
+def _load_simplelr_parquet(path):
+    ds = pd.read_parquet(path)
+    ds = pd.DataFrame({
+        'question': ds['prompt'].apply(lambda x: x[0]['content']),
+        'answer': ds['reward_model'].apply(lambda y: f"\\boxed{{{y['ground_truth']}}}")
+    })
+    return ds.to_dict(orient='records')
+
+
+def select_train_subset(examples, fraction=1.0, max_samples=0, seed=42):
+    total = len(examples)
+    if total == 0:
+        return examples
+    fraction = float(1.0 if fraction is None else fraction)
+    if fraction <= 0:
+        raise ValueError(f"train_data_fraction must be > 0, got {fraction}")
+    target = total if fraction >= 1.0 else max(1, int(math.ceil(total * fraction)))
+    max_samples = int(max_samples or 0)
+    if max_samples > 0:
+        target = min(target, max_samples)
+    if target >= total:
+        return examples
+    rng = random.Random(int(seed))
+    indices = list(range(total))
+    rng.shuffle(indices)
+    indices = sorted(indices[:target])
+    return [examples[idx] for idx in indices]
+
+
+def get_QAs_from_path(path, split):
+    """Load an explicitly configured local split without changing its path."""
+    path = os.path.abspath(os.path.expanduser(path))
+    if os.path.isfile(path):
+        extension = os.path.splitext(path)[1].lower()
+        if extension == '.parquet':
+            dataset = pd.read_parquet(path).to_dict(orient='records')
+        elif extension in {'.json', '.jsonl'}:
+            dataset = pd.read_json(path, lines=extension == '.jsonl').to_dict(orient='records')
+        else:
+            raise ValueError(f'unsupported configured dataset file: {path}')
+    elif os.path.isdir(path):
+        parquet_files = sorted(
+            os.path.join(path, name)
+            for name in os.listdir(path)
+            if name.startswith(f'{split}-') and name.endswith('.parquet')
+        )
+        if parquet_files:
+            dataset = pd.concat(
+                [pd.read_parquet(file_path) for file_path in parquet_files],
+                ignore_index=True,
+            ).to_dict(orient='records')
+        else:
+            try:
+                dataset = datasets.load_from_disk(path)
+                if isinstance(dataset, datasets.DatasetDict):
+                    dataset = dataset[split]
+            except (FileNotFoundError, ValueError):
+                dataset = datasets.load_dataset(path, split=split)
+    else:
+        raise FileNotFoundError(f'configured dataset path does not exist: {path}')
+    rows = []
+    for item in dataset:
+        if 'question' in item:
+            question = item['question']
+        elif 'prompt' in item:
+            prompt = item['prompt']
+            question = prompt[0]['content'] if isinstance(prompt, list) else prompt
+        else:
+            raise KeyError('dataset row has neither question nor prompt')
+        answer = item.get('answer')
+        if answer is None and isinstance(item.get('reward_model'), dict):
+            answer = item['reward_model'].get('ground_truth')
+        if answer is not None and '####' in str(answer):
+            answer = str(answer).split('####')[-1].strip()
+        if answer is not None and '\\boxed{' not in str(answer):
+            answer = f"\\boxed{{{answer}}}"
+        rows.append({'question': question, 'answer': answer})
+    return rows
 
 def get_test_QAs(option,tokenizer=None):
     
@@ -67,18 +148,16 @@ def get_test_QAs(option,tokenizer=None):
         QAs = ds.to_dict(orient='records')
     elif option == "simplelr_abel_level3to5":
         data_path = f"./data/simplelr_abel_level3to5/test.parquet"
-        ds = pd.read_parquet(data_path)
-        ds = pd.DataFrame({
-        'question': ds['prompt'].apply(lambda x: x[0]['content']),
-        'answer': ds['reward_model'].apply(lambda y: f"\\boxed{{{y['ground_truth']}}}")
-        })
-        QAs = ds.to_dict(orient='records')
+        QAs = _load_simplelr_parquet(data_path)
+    elif option == "simplelr_abel_level3to5_smoke":
+        data_path = f"./data/simplelr_abel_level3to5_smoke/test.parquet"
+        QAs = _load_simplelr_parquet(data_path)
     elif option == 'DAPO-math':
         dataset = datasets.load_dataset(r"./data/DAPO-Math-17k-Processed",split='train')
         QAs = [{'question' : item['prompt'] , 'answer' : f"\\boxed{{{item['reward_model']['ground_truth']}}}" }for item in dataset]
     if tokenizer is None:
         return QAs
-    return QAs , DataCollator(tokenizer,prompt_dict[info[option]]['system_prompt'],prompt_dict[info[option]]['system_prompt']) 
+    return QAs , DataCollator(tokenizer,prompt_dict[info[option]]['system_prompt'],prompt_dict[info[option]]['system_prompt'])
 
 
 def get_train_QAs(option,tokenizer=None):
@@ -96,15 +175,13 @@ def get_train_QAs(option,tokenizer=None):
         QAs = ds.to_dict(orient='records')
     elif option == "simplelr_abel_level3to5":
         data_path = f"./data/simplelr_abel_level3to5/train.parquet"
-        ds = pd.read_parquet(data_path)
-        ds = pd.DataFrame({
-        'question': ds['prompt'].apply(lambda x: x[0]['content']),
-        'answer': ds['reward_model'].apply(lambda y: f"\\boxed{{{y['ground_truth']}}}")
-        })
-        QAs = ds.to_dict(orient='records')
+        QAs = _load_simplelr_parquet(data_path)
+    elif option == "simplelr_abel_level3to5_smoke":
+        data_path = f"./data/simplelr_abel_level3to5_smoke/train.parquet"
+        QAs = _load_simplelr_parquet(data_path)
     elif option == 'DAPO-math':
         dataset = datasets.load_dataset(f"./data/DAPO-Math-17k-Processed",split='train')
         QAs = [{'question' : item['prompt'] , 'answer' : f"\\boxed{{{item['reward_model']['ground_truth']}}}" }for item in dataset]
     if tokenizer is None:
         return QAs
-    return QAs , DataCollator(tokenizer,prompt_dict[info[option]]['system_prompt'],prompt_dict[info[option]]['system_prompt']) 
+    return QAs , DataCollator(tokenizer,prompt_dict[info[option]]['system_prompt'],prompt_dict[info[option]]['system_prompt'])
