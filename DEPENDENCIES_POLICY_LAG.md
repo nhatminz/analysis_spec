@@ -11,8 +11,8 @@
 - SGLang: upstream SpecForge pins `0.5.18`; the offline-capture adapter also
   accepts the installed B200 `0.5.14` exactly. The adapter handles the missing
   runtime flags/DCP fields and the older `ModelRunner`, `ForwardBatch`, and
-  DP-sync signatures. SGLang is **not** used for FastGRPO rollout or
-  verification here.
+  DP-sync/request-range representations. SGLang is **not** used for FastGRPO
+  rollout or verification here.
 
 SpecForge source is bundled in `third_party/SpecForge`, including a
 `VENDORED_COMMIT` provenance file, so the experiment does not clone or fetch

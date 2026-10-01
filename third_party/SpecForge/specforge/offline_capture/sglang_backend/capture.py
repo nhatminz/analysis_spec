@@ -106,6 +106,26 @@ def _build_parallel_state(
     return ParallelState(**state_kwargs)
 
 
+def _set_req_extend_range(req: Req, start: int, end: int) -> None:
+    """Set the uncached request span on SGLang 0.5.14 or 0.5.18."""
+    set_extend_range = getattr(req, "set_extend_range", None)
+    if callable(set_extend_range):
+        set_extend_range(start, end)
+        return
+
+    # SGLang 0.5.14 represents the same span with fill_len plus
+    # extend_input_len. Its ScheduleBatch always slices at prefix_indices, so
+    # accepting any other start would silently capture the wrong token range.
+    prefix_len = len(req.prefix_indices)
+    if start != prefix_len:
+        raise RuntimeError(
+            "SGLang 0.5.14 request range must start at the cached prefix: "
+            f"start={start}, prefix_len={prefix_len}"
+        )
+    req.fill_len = end
+    req.set_extend_input_len(end - start)
+
+
 class OfflineSGLangCaptureBackend:
     """Frozen local target used only to materialize offline features."""
 
@@ -306,10 +326,12 @@ class OfflineSGLangCaptureBackend:
                 sampling_params=sampling_params,
             )
             req.full_untruncated_fill_ids = array("q", req.origin_input_ids)
-            req.set_extend_range(
-                len(req.prefix_indices), len(req.full_untruncated_fill_ids)
-            )
             req.logprob_start_len = len(req.origin_input_ids) - 1
+            _set_req_extend_range(
+                req,
+                len(req.prefix_indices),
+                len(req.full_untruncated_fill_ids),
+            )
             reqs.append(req)
 
         input_lens = [len(req.origin_input_ids) for req in reqs]

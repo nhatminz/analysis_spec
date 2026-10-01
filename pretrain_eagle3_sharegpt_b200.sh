@@ -194,6 +194,7 @@ report = {
         "lazy_sglang_runtime_context_get_flags_for_dp_disabled_capture",
         "sglang_0_5_14_parallel_state_without_dcp_fields",
         "sglang_0_5_14_model_runner_and_forward_batch_signatures",
+        "sglang_0_5_14_req_fill_len_extend_range",
     ],
     "capability_checks": list(capabilities) + ["specforge.offline_capture.sglang_backend"],
 }

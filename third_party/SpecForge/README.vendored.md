@@ -17,10 +17,11 @@ Local runtime compatibility patches are applied in
 `sglang.srt.runtime_context.get_flags` API is imported lazily, and the
 `ParallelState` constructor omits DCP fields on SGLang 0.5.14 where those
 fields do not exist. The offline runner also translates the 0.5.18
-`ModelRunner`/`ForwardBatch` call signatures to their 0.5.14 equivalents.
-These adaptations preserve the rank-0/size-1 topology of the default
-DP/DCP-disabled capture path; requesting unsupported DP/DCP modes still fails
-explicitly. They do not change captured tensors or the training algorithm.
+`ModelRunner`/`ForwardBatch` call signatures and request `extend_range` into
+their 0.5.14 equivalents. These adaptations preserve the rank-0/size-1
+topology of the default DP/DCP-disabled capture path; requesting unsupported
+DP/DCP modes still fails explicitly. They do not change captured tensors or
+the training algorithm.
 
 Production launchers use `scripts/generate_eagle3_config.py` to apply those
 same rules to the selected `TARGET_MODEL_PATH`; the checked-in 3B/7B files are
