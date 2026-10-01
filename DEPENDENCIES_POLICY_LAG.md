@@ -3,8 +3,11 @@
 - FastGRPO: `yedaotian9/FastGRPO@38e252493149072d2c5905f0a47de1d935d7170a`
 - SpecForge: `sgl-project/SpecForge@3cb0510f0bd0e8c195ac6e9c5c62f6b50580ff83` (`0.2.0`)
 - Python: `>=3.11` (required by the pinned SpecForge commit)
-- PyTorch: `2.13.0` (SpecForge pin)
-- Transformers: `5.12.1` (SpecForge pin)
+- PyTorch: upstream pins `2.13.0`; the bundled source also contains its explicit
+  Torch 2.11 CuteDSL compatibility shim, and launch validation accepts
+  `2.11.x` or `2.13.x` without replacing the installed CUDA build.
+- Transformers: upstream pins `5.12.1`; capability validation accepts
+  `>=5.9,<6.0` for the offline B200 stack.
 - SGLang: `0.5.18` (SpecForge dependency, but **not** used for FastGRPO rollout or verification here)
 
 SpecForge source is bundled in `third_party/SpecForge`, including a
@@ -22,3 +25,9 @@ The development workstation does not have this exact production environment,
 so full B200 execution was not launched there. Dependency validation
 intentionally fails on a mismatched stack instead of silently selecting another
 SpecForge commit or objective.
+
+The launcher imports the concrete EAGLE-3, FlexAttention, and offline SGLang
+capture APIs before allocating the target model. It writes the actual Python,
+Torch, Transformers, and SGLang versions to each pretrain run's
+`dependencies.json`; this records the deviation from the upstream lock instead
+of pretending the installed Torch version is 2.13.

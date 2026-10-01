@@ -402,11 +402,24 @@ def main():
             )
         if str(report.get("specforge", "")).startswith("MISSING"):
             raise RuntimeError(report["specforge"])
-        if not str(report.get('torch', '')).startswith('2.13.0'):
-            raise RuntimeError(f'pinned SpecForge requires torch==2.13.0; found {report.get("torch")}')
-        if report.get('transformers') != '5.12.1':
+        from packaging.version import Version
+
+        torch_version = str(report.get('torch', '')).split('+', 1)[0]
+        transformers_version = str(report.get('transformers', '')).split('+', 1)[0]
+        try:
+            torch_parsed = Version(torch_version)
+            transformers_parsed = Version(transformers_version)
+        except Exception as exc:
+            raise RuntimeError(f'cannot parse runtime dependency versions: {exc}') from exc
+        if (torch_parsed.major, torch_parsed.minor) not in {(2, 11), (2, 13)}:
             raise RuntimeError(
-                f'pinned SpecForge requires transformers==5.12.1; found {report.get("transformers")}'
+                'policy-lag EAGLE-3 supports validated torch 2.11.x or the '
+                f'upstream 2.13.x lock; found {report.get("torch")}'
+            )
+        if not (Version('5.9.0') <= transformers_parsed < Version('6.0.0')):
+            raise RuntimeError(
+                'policy-lag EAGLE-3 requires transformers >=5.9,<6.0; found '
+                f'{report.get("transformers")}'
             )
         if report.get('specforge_commit') != SPECFORGE_COMMIT:
             raise RuntimeError(

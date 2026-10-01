@@ -40,6 +40,11 @@ PYTHON_BIN="$(command -v python)" \
 bash run_b200_policy_lag_pipeline.sh
 ```
 
+The launcher keeps an installed CUDA Torch `2.11.x` build. It does not ask pip
+to replace it with the upstream `2.13.0` lock. Before loading the model it
+checks the concrete EAGLE-3, FlexAttention, and SGLang capture APIs and records
+the actual versions in `<run-directory>/dependencies.json`.
+
 For Qwen2.5-7B-Instruct, only change the path:
 
 ```bash

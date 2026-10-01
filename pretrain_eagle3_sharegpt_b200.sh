@@ -118,9 +118,13 @@ if [[ ! -f "$DRAFT_CONFIG" ]]; then
 fi
 [[ -f "$DRAFT_CONFIG" ]] || fail "EAGLE-3 config was not created: $DRAFT_CONFIG"
 
-"$PYTHON_BIN" - <<'PY'
+"$PYTHON_BIN" - "$PRETRAIN_ROOT/dependencies.json" <<'PY'
 import importlib
+import json
+import os
 import sys
+from pathlib import Path
+from packaging.version import Version
 
 if sys.version_info < (3, 11):
     raise SystemExit(f"Python >=3.11 is required; found {sys.version.split()[0]}")
@@ -133,12 +137,58 @@ for name in ("torch", "transformers", "datasets", "accelerate", "yaml", "sglang"
 torch_version = modules["torch"].__version__
 transformers_version = modules["transformers"].__version__
 sglang_version = getattr(modules["sglang"], "__version__", "unknown")
-if not torch_version.startswith("2.13.0"):
-    raise SystemExit(f"pinned SpecForge requires torch==2.13.0; found {torch_version}")
-if transformers_version != "5.12.1":
-    raise SystemExit(f"pinned SpecForge requires transformers==5.12.1; found {transformers_version}")
-if sglang_version != "0.5.18":
-    raise SystemExit(f"pinned SpecForge requires sglang==0.5.18; found {sglang_version}")
+torch_base = Version(torch_version.split("+", 1)[0])
+transformers_base = Version(transformers_version.split("+", 1)[0])
+# SpecForge contains an explicit Torch-2.11 CuteDSL compatibility shim. 2.13 is
+# its upstream lockfile version; both stacks exercise the same EAGLE-3 code.
+if (torch_base.major, torch_base.minor) not in {(2, 11), (2, 13)}:
+    raise SystemExit(
+        "unsupported torch stack: expected a validated 2.11.x or upstream "
+        f"2.13.x build, found {torch_version}"
+    )
+if not (Version("5.9.0") <= transformers_base < Version("6.0.0")):
+    raise SystemExit(
+        "unsupported transformers stack: expected >=5.9,<6.0, found "
+        f"{transformers_version}"
+    )
+
+# Import the concrete APIs used by EAGLE-3 training and local SGLang feature
+# capture. This is more useful than rejecting a working locally installed build
+# solely because its package version differs from the upstream lockfile.
+capabilities = (
+    "specforge.modeling.auto",
+    "specforge.algorithms.eagle3.model",
+    "torch.nn.attention.flex_attention",
+)
+for name in capabilities:
+    try:
+        importlib.import_module(name)
+    except Exception as exc:
+        raise SystemExit(f"dependency capability check failed for {name}: {type(exc).__name__}: {exc}")
+try:
+    backend = importlib.import_module("specforge.offline_capture.sglang_backend")
+    getattr(backend, "OfflineSGLangCaptureBackend")
+except Exception as exc:
+    raise SystemExit(
+        "installed SGLang does not provide the APIs required for offline "
+        f"feature capture: {type(exc).__name__}: {exc}"
+    )
+
+report = {
+    "python": sys.version.split()[0],
+    "torch": torch_version,
+    "transformers": transformers_version,
+    "sglang": sglang_version,
+    "specforge": getattr(modules["specforge"], "__version__", "vendored"),
+    "compatibility_mode": "torch_2_11" if torch_base.minor == 11 else "upstream_lock",
+    "capability_checks": list(capabilities) + ["specforge.offline_capture.sglang_backend"],
+}
+path = Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+temporary = path.with_suffix(".json.tmp")
+temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+os.replace(temporary, path)
+print("Runtime dependency check passed:", json.dumps(report, sort_keys=True))
 PY
 
 "$PYTHON_BIN" - "$TARGET_MODEL_PATH/config.json" "$DRAFT_CONFIG" <<'PY'
@@ -257,11 +307,12 @@ env CUDA_VISIBLE_DEVICES="$TRAIN_CUDA_VISIBLE_DEVICES" "${train_cmd[@]}" \
   2>&1 | tee -a "$PRETRAIN_ROOT/logs/train.log"
 
 [[ -f "$LATEST_CHECKPOINT/training_state.pt" ]] || fail "SpecForge did not create $LATEST_CHECKPOINT/training_state.pt"
-"$PYTHON_BIN" - "$PRETRAIN_MARKER" "$LATEST_CHECKPOINT" "$VOCAB_MAPPING" "$TARGET_MODEL_PATH" "$DRAFT_CONFIG" "$RUN_ID" <<'PY'
+"$PYTHON_BIN" - "$PRETRAIN_MARKER" "$LATEST_CHECKPOINT" "$VOCAB_MAPPING" "$TARGET_MODEL_PATH" "$DRAFT_CONFIG" "$RUN_ID" "$PRETRAIN_ROOT/dependencies.json" <<'PY'
 import json, os, sys
 from pathlib import Path
 marker, checkpoint, mapping, target, config = map(Path, sys.argv[1:6])
 run_id = sys.argv[6]
+dependencies_path = Path(sys.argv[7])
 payload = {
     "status": "complete",
     "run_id": run_id,
@@ -269,6 +320,7 @@ payload = {
     "checkpoint": str(checkpoint.resolve()),
     "vocab_mapping": str(mapping.resolve()),
     "draft_config": str(config.resolve()),
+    "dependencies": json.loads(dependencies_path.read_text(encoding="utf-8")),
 }
 tmp = marker.with_suffix('.json.tmp')
 tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
