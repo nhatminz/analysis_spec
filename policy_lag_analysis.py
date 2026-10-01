@@ -55,10 +55,18 @@ def state_digest(state: Mapping) -> str:
 
     def visit(value):
         if torch.is_tensor(value):
-            tensor = value.detach().cpu().contiguous()
+            tensor = value.detach().cpu().resolve_conj().resolve_neg().contiguous()
+            if tensor.layout != torch.strided:
+                raise TypeError(
+                    f"state_digest supports dense model/optimizer tensors, got {tensor.layout}"
+                )
             digest.update(str(tensor.dtype).encode())
             digest.update(str(tuple(tensor.shape)).encode())
-            digest.update(tensor.view(torch.uint8).numpy().tobytes())
+            # A dtype-changing view cannot operate directly on a scalar tensor
+            # in current PyTorch releases. Flatten first so 0-D AdamW ``step``
+            # tensors, BF16 parameters and empty tensors all share the same
+            # byte-oriented hashing path.
+            digest.update(tensor.reshape(-1).view(torch.uint8).numpy().tobytes())
         elif isinstance(value, Mapping):
             for key in sorted(value, key=str):
                 digest.update(str(key).encode())
@@ -337,6 +345,12 @@ def smoke_test(output_dir: Path) -> None:
         optimizer.step()
         branches[name] = (branch, optimizer)
     assert state_digest(base_state) == state_digest({k: v.detach() for k, v in base_state.items()})
+    # AdamW stores its step counter as a scalar tensor. Keep this in the smoke
+    # test because policy-lag branch restoration hashes the full optimizer
+    # state before doing any expensive evaluation rollout.
+    optimizer_state = branches["stale"][1].state_dict()
+    assert state_digest(optimizer_state) == state_digest(optimizer_state)
+    assert len(state_digest({"scalar": torch.tensor(1.0), "bf16": torch.ones(2, dtype=torch.bfloat16)})) == 64
     stale_records = [
         {"prompt_id": "p0", "accepted_length_sum": 5, "verification_rounds": 2, "generated_tokens": 5},
         {"prompt_id": "p1", "accepted_length_sum": 3, "verification_rounds": 2, "generated_tokens": 4},
