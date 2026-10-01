@@ -17,9 +17,11 @@ Expected placement:
     └── DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet
 ```
 
-The default target remains
-`/workspace/storage-shared/models/Qwen2.5-7B-Instruct`. Override
-`TARGET_MODEL_PATH` if the same checkpoint is mounted elsewhere.
+The target model path is the source of truth. The default is
+`/workspace/storage-shared/models/Qwen2.5-3B-Instruct`; set only
+`TARGET_MODEL_PATH` to use another local compatible Qwen2/Qwen2.5
+checkpoint. The launcher reads that model's `config.json` and generates the
+matching one-layer EAGLE-3 config and capture layers automatically.
 
 ## Commands
 
@@ -30,10 +32,35 @@ cd /workspace/storage-shared/nlp/minhpn19/fastgrpo
 PYTHON_BIN="$(command -v python)" bash run_b200_policy_lag_pipeline.sh
 ```
 
+For Qwen2.5-3B-Instruct:
+
+```bash
+TARGET_MODEL_PATH=/workspace/storage-shared/models/Qwen2.5-3B-Instruct \
+PYTHON_BIN="$(command -v python)" \
+bash run_b200_policy_lag_pipeline.sh
+```
+
+For Qwen2.5-7B-Instruct, only change the path:
+
+```bash
+TARGET_MODEL_PATH=/workspace/storage-shared/models/Qwen2.5-7B-Instruct \
+PYTHON_BIN="$(command -v python)" \
+bash run_b200_policy_lag_pipeline.sh
+```
+
+The model directory basename becomes a filesystem-safe model slug. Every
+pretrain invocation receives a UTC timestamp with nanoseconds in its run ID,
+so runs do not overwrite one another. On success, stable `latest_*` symlinks
+are updated. The analysis launcher reads the latest completed run manifest and
+therefore does not need the run ID copied by hand.
+
 Or run separately:
 
 ```bash
-PYTHON_BIN="$(command -v python)" bash pretrain_eagle3_sharegpt_b200.sh
+TARGET_MODEL_PATH=/workspace/storage-shared/models/Qwen2.5-3B-Instruct \
+PYTHON_BIN="$(command -v python)" \
+bash pretrain_eagle3_sharegpt_b200.sh
+
 PYTHON_BIN="$(command -v python)" bash run_policy_lag_analysis_b200.sh
 ```
 
@@ -70,17 +97,19 @@ single-process decoder and therefore intentionally uses one GPU.
 SpecForge pretraining:
 
 ```text
-/workspace/storage-shared/nlp/minhpn19/outputs/specforge/qwen25_7b_sharegpt_1ep/
-├── data/sharegpt_train.jsonl
-├── features/
-│   ├── **/*.ckpt
-│   ├── vocab_mapping/vocab_mapping.pt
-│   └── capture_complete.json
-├── checkpoints/
-│   ├── qwen25-7b-eagle3-sharegpt-1ep-step<N>/
-│   ├── qwen25-7b-eagle3-sharegpt-1ep-latest
-│   └── pretrain_complete.json
-└── logs/{capture.log,train.log}
+/workspace/storage-shared/nlp/minhpn19/outputs/specforge/
+├── latest_run -> <latest completed run>
+└── qwen2_5_3b_instruct/
+    ├── latest_run -> runs/<run-id>
+    ├── latest_checkpoint -> runs/<run-id>/checkpoints/<run-id>-latest
+    ├── latest_draft_config.json -> runs/<run-id>/config/eagle3.json
+    ├── latest_vocab_mapping.pt -> runs/<run-id>/features/vocab_mapping/vocab_mapping.pt
+    └── runs/<run-id>/
+        ├── config/eagle3.json
+        ├── data/sharegpt_train.jsonl
+        ├── features/{**/*.ckpt,vocab_mapping/vocab_mapping.pt,capture_complete.json}
+        ├── checkpoints/{<run-id>-step<N>,<run-id>-latest,pretrain_complete.json}
+        └── logs/{capture.log,train.log}
 ```
 
 DAPO split and policy-lag results:
@@ -88,7 +117,7 @@ DAPO split and policy-lag results:
 ```text
 /workspace/storage-shared/nlp/minhpn19/outputs/fastgrpo/policy_lag/
 ├── dapo_math_seed42/{train.jsonl,eval.jsonl,split_manifest.json}
-└── qwen25_7b_dapo5k/
+└── qwen2_5_3b_instruct/<pretrain-run-id>_dapo5k/
     ├── analysis/{per_response.jsonl,summary.jsonl,summary.csv,aal_policy_lag.png}
     ├── analysis/boundaries/step_*/{phi_base.pt,draft_stale.pt,draft_fresh.pt,complete.json}
     ├── checkpoints/latest.pt

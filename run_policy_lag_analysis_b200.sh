@@ -6,19 +6,47 @@ WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
 SPECFORGE_DIR="${SPECFORGE_DIR:-$SCRIPT_DIR/third_party/SpecForge}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-7B-Instruct}"
+GLOBAL_LATEST_RUN="$WORKSPACE/outputs/specforge/latest_run"
+TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-}"
+PRETRAIN_ROOT="${PRETRAIN_ROOT:-}"
+if [[ -z "$TARGET_MODEL_PATH" && -z "$PRETRAIN_ROOT" && -e "$GLOBAL_LATEST_RUN" ]]; then
+  PRETRAIN_ROOT="$(readlink -f "$GLOBAL_LATEST_RUN")"
+fi
+if [[ -z "$TARGET_MODEL_PATH" && -n "$PRETRAIN_ROOT" && -f "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" ]]; then
+  TARGET_MODEL_PATH="$($PYTHON_BIN - "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding='utf-8'))['target_model_path'])
+PY
+)"
+fi
+TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-3B-Instruct}"
+MODEL_BASENAME="$(basename "${TARGET_MODEL_PATH%/}")"
+MODEL_SLUG="$(printf '%s' "$MODEL_BASENAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_')"
+MODEL_SLUG="${MODEL_SLUG%_}"
+MODEL_OUTPUT_ROOT="${MODEL_OUTPUT_ROOT:-$WORKSPACE/outputs/specforge/$MODEL_SLUG}"
+if [[ -z "$PRETRAIN_ROOT" && -e "$MODEL_OUTPUT_ROOT/latest_run" ]]; then
+  PRETRAIN_ROOT="$(readlink -f "$MODEL_OUTPUT_ROOT/latest_run")"
+fi
+PRETRAIN_RUN_ID="$(basename "${PRETRAIN_ROOT:-unresolved_latest}")"
+if [[ -n "$PRETRAIN_ROOT" && -f "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" ]]; then
+  "$PYTHON_BIN" - "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" "$TARGET_MODEL_PATH" <<'PY'
+import json, os, sys
+recorded = os.path.realpath(json.load(open(sys.argv[1], encoding='utf-8'))['target_model_path'])
+requested = os.path.realpath(sys.argv[2])
+if recorded != requested:
+    raise SystemExit(f"pretrain target mismatch: checkpoint={recorded}, requested={requested}")
+PY
+fi
 DAPO_PARQUET="${DAPO_PARQUET:-$WORKSPACE/data/DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet}"
 DAPO_SPLIT_DIR="${DAPO_SPLIT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/dapo_math_seed42}"
 DAPO_ANALYSIS_SAMPLES="${DAPO_ANALYSIS_SAMPLES:-5000}"
 DAPO_EVAL_SAMPLES="${DAPO_EVAL_SAMPLES:-512}"
 DAPO_SPLIT_SEED="${DAPO_SPLIT_SEED:-42}"
 
-PRETRAIN_ROOT="${PRETRAIN_ROOT:-$WORKSPACE/outputs/specforge/qwen25_7b_sharegpt_1ep}"
-RUN_ID="${RUN_ID:-qwen25-7b-eagle3-sharegpt-1ep}"
-DRAFT_CHECKPOINT="${DRAFT_CHECKPOINT:-$PRETRAIN_ROOT/checkpoints/$RUN_ID-latest}"
-DRAFT_CONFIG="${DRAFT_CONFIG:-$SPECFORGE_DIR/configs/qwen2.5-7b-eagle3.json}"
-VOCAB_MAPPING="${VOCAB_MAPPING:-$PRETRAIN_ROOT/features/vocab_mapping/vocab_mapping.pt}"
-OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/qwen25_7b_dapo5k}"
+DRAFT_CHECKPOINT="${DRAFT_CHECKPOINT:-$MODEL_OUTPUT_ROOT/latest_checkpoint}"
+DRAFT_CONFIG="${DRAFT_CONFIG:-$MODEL_OUTPUT_ROOT/latest_draft_config.json}"
+VOCAB_MAPPING="${VOCAB_MAPPING:-$MODEL_OUTPUT_ROOT/latest_vocab_mapping.pt}"
+OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/$MODEL_SLUG/${PRETRAIN_RUN_ID}_dapo5k}"
 
 FORCE_DAPO_SPLIT="${FORCE_DAPO_SPLIT:-false}"
 PREPARE_DAPO_ONLY="${PREPARE_DAPO_ONLY:-false}"

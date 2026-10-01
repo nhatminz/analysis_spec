@@ -6,16 +6,38 @@ WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
 SPECFORGE_DIR="${SPECFORGE_DIR:-$SCRIPT_DIR/third_party/SpecForge}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-7B-Instruct}"
+# Primary knob: edit/override only this path to select the target model.
+TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-3B-Instruct}"
 SHAREGPT_PATH="${SHAREGPT_PATH:-$WORKSPACE/data/sharegpt/ShareGPT_V4.3_unfiltered_cleaned_split.json}"
-DRAFT_CONFIG="${DRAFT_CONFIG:-$SPECFORGE_DIR/configs/qwen2.5-7b-eagle3.json}"
+MODEL_BASENAME="$(basename "${TARGET_MODEL_PATH%/}")"
+MODEL_SLUG="$(printf '%s' "$MODEL_BASENAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_')"
+MODEL_SLUG="${MODEL_SLUG%_}"
+MODEL_OUTPUT_ROOT="${MODEL_OUTPUT_ROOT:-$WORKSPACE/outputs/specforge/$MODEL_SLUG}"
+RESUME_PRETRAIN="${RESUME_PRETRAIN:-true}"
+REQUESTED_RUN_ID="${RUN_ID:-}"
+REQUESTED_PRETRAIN_ROOT="${PRETRAIN_ROOT:-}"
+ACTIVE_RUN_LINK="$MODEL_OUTPUT_ROOT/active_run"
+if [[ -n "$REQUESTED_PRETRAIN_ROOT" ]]; then
+  PRETRAIN_ROOT="$REQUESTED_PRETRAIN_ROOT"
+  RUN_ID="${REQUESTED_RUN_ID:-$(basename "$PRETRAIN_ROOT")}"
+elif [[ -n "$REQUESTED_RUN_ID" ]]; then
+  RUN_ID="$REQUESTED_RUN_ID"
+  PRETRAIN_ROOT="$MODEL_OUTPUT_ROOT/runs/$RUN_ID"
+elif [[ "$RESUME_PRETRAIN" == "true" && -e "$ACTIVE_RUN_LINK" && ! -f "$(readlink -f "$ACTIVE_RUN_LINK")/checkpoints/pretrain_complete.json" ]]; then
+  PRETRAIN_ROOT="$(readlink -f "$ACTIVE_RUN_LINK")"
+  RUN_ID="$(basename "$PRETRAIN_ROOT")"
+else
+  RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%dT%H%M%S_%N)}"
+  RUN_ID="${MODEL_SLUG}_eagle3_sharegpt_1ep_${RUN_TAG}"
+  PRETRAIN_ROOT="$MODEL_OUTPUT_ROOT/runs/$RUN_ID"
+fi
+DRAFT_VOCAB_SIZE="${DRAFT_VOCAB_SIZE:-16000}"
+DRAFT_CONFIG="${DRAFT_CONFIG:-$PRETRAIN_ROOT/config/eagle3.json}"
 
-PRETRAIN_ROOT="${PRETRAIN_ROOT:-$WORKSPACE/outputs/specforge/qwen25_7b_sharegpt_1ep}"
 CONVERTED_DATA_DIR="${CONVERTED_DATA_DIR:-$PRETRAIN_ROOT/data}"
 CONVERTED_DATA_PATH="${CONVERTED_DATA_PATH:-$CONVERTED_DATA_DIR/sharegpt_train.jsonl}"
 FEATURE_DIR="${FEATURE_DIR:-$PRETRAIN_ROOT/features}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-$PRETRAIN_ROOT/checkpoints}"
-RUN_ID="${RUN_ID:-qwen25-7b-eagle3-sharegpt-1ep}"
 
 DRAFT_INITIALIZATION_MODE="${DRAFT_INITIALIZATION_MODE:-random}"
 INITIAL_DRAFT_CHECKPOINT="${INITIAL_DRAFT_CHECKPOINT:-}"
@@ -40,7 +62,6 @@ CAPTURE_IO_THREADS="${CAPTURE_IO_THREADS:-16}"
 CAPTURE_COMPRESS="${CAPTURE_COMPRESS:-false}"
 
 TRAIN_CUDA_VISIBLE_DEVICES="${TRAIN_CUDA_VISIBLE_DEVICES:-0}"
-RESUME_PRETRAIN="${RESUME_PRETRAIN:-true}"
 FORCE_CAPTURE="${FORCE_CAPTURE:-false}"
 PREPARE_ONLY="${PREPARE_ONLY:-false}"
 DRY_RUN="${DRY_RUN:-false}"
@@ -56,10 +77,17 @@ run() {
   printf 'Run:'; printf ' %q' "$@"; printf '\n'
   if [[ "$DRY_RUN" != "true" ]]; then "$@"; fi
 }
+publish_latest() {
+  mkdir -p "$MODEL_OUTPUT_ROOT"
+  ln -sfn "$PRETRAIN_ROOT" "$MODEL_OUTPUT_ROOT/latest_run"
+  ln -sfn "$LATEST_CHECKPOINT" "$MODEL_OUTPUT_ROOT/latest_checkpoint"
+  ln -sfn "$VOCAB_MAPPING" "$MODEL_OUTPUT_ROOT/latest_vocab_mapping.pt"
+  ln -sfn "$DRAFT_CONFIG" "$MODEL_OUTPUT_ROOT/latest_draft_config.json"
+  ln -sfn "$PRETRAIN_ROOT" "$WORKSPACE/outputs/specforge/latest_run"
+}
 
 [[ -f "$TARGET_MODEL_PATH/config.json" ]] || fail "target model not found: $TARGET_MODEL_PATH"
 [[ -f "$SHAREGPT_PATH" ]] || fail "ShareGPT file not found: $SHAREGPT_PATH"
-[[ -f "$DRAFT_CONFIG" ]] || fail "EAGLE-3 config not found: $DRAFT_CONFIG"
 [[ -f "$SPECFORGE_DIR/VENDORED_COMMIT" ]] || fail "vendored SpecForge is incomplete: $SPECFORGE_DIR"
 grep -q "commit=$EXPECTED_SPECFORGE_COMMIT" "$SPECFORGE_DIR/VENDORED_COMMIT" || \
   fail "vendored SpecForge commit does not match $EXPECTED_SPECFORGE_COMMIT"
@@ -76,6 +104,19 @@ export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export WANDB_MODE="${WANDB_MODE:-offline}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
+mkdir -p "$MODEL_OUTPUT_ROOT" "$PRETRAIN_ROOT"
+ln -sfn "$PRETRAIN_ROOT" "$ACTIVE_RUN_LINK"
+printf 'Target model : %s\nModel slug   : %s\nRun ID       : %s\nRun directory: %s\n' \
+  "$TARGET_MODEL_PATH" "$MODEL_SLUG" "$RUN_ID" "$PRETRAIN_ROOT"
+
+if [[ ! -f "$DRAFT_CONFIG" ]]; then
+  "$PYTHON_BIN" "$SCRIPT_DIR/scripts/generate_eagle3_config.py" \
+    --target-model-path "$TARGET_MODEL_PATH" \
+    --output "$DRAFT_CONFIG" \
+    --draft-vocab-size "$DRAFT_VOCAB_SIZE"
+fi
+[[ -f "$DRAFT_CONFIG" ]] || fail "EAGLE-3 config was not created: $DRAFT_CONFIG"
 
 "$PYTHON_BIN" - <<'PY'
 import importlib
@@ -98,6 +139,21 @@ if transformers_version != "5.12.1":
     raise SystemExit(f"pinned SpecForge requires transformers==5.12.1; found {transformers_version}")
 if sglang_version != "0.5.18":
     raise SystemExit(f"pinned SpecForge requires sglang==0.5.18; found {sglang_version}")
+PY
+
+"$PYTHON_BIN" - "$TARGET_MODEL_PATH/config.json" "$DRAFT_CONFIG" <<'PY'
+import json, sys
+target = json.load(open(sys.argv[1], encoding="utf-8"))
+draft = json.load(open(sys.argv[2], encoding="utf-8"))
+checks = ("hidden_size", "intermediate_size", "num_attention_heads", "num_key_value_heads", "vocab_size")
+mismatch = {key: (target.get(key), draft.get(key)) for key in checks if target.get(key) != draft.get(key)}
+if mismatch:
+    raise SystemExit(f"target/draft architecture mismatch: {mismatch}")
+layers = draft.get("eagle_config", {}).get("eagle_aux_hidden_state_layer_ids")
+expected = [1, target["num_hidden_layers"] // 2 - 1, target["num_hidden_layers"] - 4]
+if layers is not None and layers != expected:
+    raise SystemExit(f"EAGLE-3 feature layers mismatch: configured={layers}, expected={expected}")
+print(f"Validated {target['hidden_size']}-wide target/draft config; feature layers={layers or expected}")
 PY
 
 mkdir -p "$CONVERTED_DATA_DIR" "$PRETRAIN_ROOT/logs" "$CHECKPOINT_DIR"
@@ -163,6 +219,7 @@ fi
 
 [[ -f "$VOCAB_MAPPING" ]] || fail "vocabulary mapping not found: $VOCAB_MAPPING"
 if [[ -f "$PRETRAIN_MARKER" && -f "$LATEST_CHECKPOINT/training_state.pt" ]]; then
+  publish_latest
   echo "Reuse completed one-epoch checkpoint: $LATEST_CHECKPOINT"
   exit 0
 fi
@@ -200,14 +257,25 @@ env CUDA_VISIBLE_DEVICES="$TRAIN_CUDA_VISIBLE_DEVICES" "${train_cmd[@]}" \
   2>&1 | tee -a "$PRETRAIN_ROOT/logs/train.log"
 
 [[ -f "$LATEST_CHECKPOINT/training_state.pt" ]] || fail "SpecForge did not create $LATEST_CHECKPOINT/training_state.pt"
-"$PYTHON_BIN" - "$PRETRAIN_MARKER" "$LATEST_CHECKPOINT" "$VOCAB_MAPPING" <<'PY'
+"$PYTHON_BIN" - "$PRETRAIN_MARKER" "$LATEST_CHECKPOINT" "$VOCAB_MAPPING" "$TARGET_MODEL_PATH" "$DRAFT_CONFIG" "$RUN_ID" <<'PY'
 import json, os, sys
 from pathlib import Path
-marker, checkpoint, mapping = map(Path, sys.argv[1:])
-payload = {"status": "complete", "checkpoint": str(checkpoint.resolve()), "vocab_mapping": str(mapping.resolve())}
+marker, checkpoint, mapping, target, config = map(Path, sys.argv[1:6])
+run_id = sys.argv[6]
+payload = {
+    "status": "complete",
+    "run_id": run_id,
+    "target_model_path": str(target.resolve()),
+    "checkpoint": str(checkpoint.resolve()),
+    "vocab_mapping": str(mapping.resolve()),
+    "draft_config": str(config.resolve()),
+}
 tmp = marker.with_suffix('.json.tmp')
 tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 os.replace(tmp, marker)
 PY
+publish_latest
+echo "Run ID: $RUN_ID"
+echo "Run directory: $PRETRAIN_ROOT"
 echo "Draft checkpoint: $LATEST_CHECKPOINT"
 echo "Vocabulary mapping: $VOCAB_MAPPING"
