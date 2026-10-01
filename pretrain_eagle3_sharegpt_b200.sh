@@ -181,6 +181,9 @@ report = {
     "sglang": sglang_version,
     "specforge": getattr(modules["specforge"], "__version__", "vendored"),
     "compatibility_mode": "torch_2_11" if torch_base.minor == 11 else "upstream_lock",
+    "local_specforge_patches": [
+        "lazy_sglang_runtime_context_get_flags_for_dp_disabled_capture"
+    ],
     "capability_checks": list(capabilities) + ["specforge.offline_capture.sglang_backend"],
 }
 path = Path(sys.argv[1])

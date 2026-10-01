@@ -11,13 +11,46 @@ from sglang.srt.layers.dp_attention import (
     _DpGatheredBufferWrapper,
     compute_dp_attention_world_info,
 )
-from sglang.srt.runtime_context import get_flags
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import get_bool_env_var
 
 from specforge.distributed import get_tp_group as get_specforge_tp_group
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_dp_runtime_flags(
+    enable_dp_attention: bool,
+    max_len_with_idle: bool,
+) -> None:
+    """Configure SGLang DP flags when that runtime API is available.
+
+    ``runtime_context.get_flags`` is not present in every SGLang release. The
+    flags are only needed when DP attention is enabled, so importing the symbol
+    eagerly makes the normal (DP-disabled) offline-capture path fail for no
+    functional reason. Keep compatibility with both API families and refuse
+    explicitly if a caller requests DP attention on a runtime that cannot
+    configure it.
+    """
+    try:
+        from sglang.srt.runtime_context import get_flags
+    except ImportError as exc:
+        if enable_dp_attention:
+            raise RuntimeError(
+                "SGLang DP attention was requested, but this SGLang build does "
+                "not provide sglang.srt.runtime_context.get_flags. Disable "
+                "--sglang-enable-dp-attention or install a compatible SGLang "
+                "build."
+            ) from exc
+        logger.info(
+            "SGLang runtime_context.get_flags is unavailable; continuing "
+            "because DP attention is disabled."
+        )
+        return
+
+    dp_flags = get_flags().dp
+    dp_flags.enabled = enable_dp_attention
+    dp_flags.max_len_with_idle = max_len_with_idle
 
 
 def init_distributed_environment(
@@ -344,10 +377,11 @@ def initialize_dp_attention(
 
     tp_rank = parallel_state.get_tensor_model_parallel_rank()
 
-    dp_flags = get_flags().dp
-    dp_flags.enabled = enable_dp_attention
-    dp_flags.max_len_with_idle = (
-        getattr(model_config.hf_config, "hybrid_override_pattern", None) is not None
+    _configure_dp_runtime_flags(
+        enable_dp_attention=enable_dp_attention,
+        max_len_with_idle=(
+            getattr(model_config.hf_config, "hybrid_override_pattern", None) is not None
+        ),
     )
 
     (

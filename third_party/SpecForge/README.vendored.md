@@ -9,7 +9,15 @@ derived from the local target `config.json` using SpecForge's target-derived
 EAGLE-3 field rules; it fixes the capture layers to `[1, 17, 32]` and uses the
 same 16K draft vocabulary setting as the upstream Qwen2.5 recipes. Tests,
 website documentation, CI files, and unrelated example assets were omitted;
-no runtime algorithm files were modified.
+the EAGLE-3 architecture, feature extraction, loss, and unrolling code is
+unchanged.
+
+One local runtime compatibility patch is applied in
+`specforge/offline_capture/sglang_backend/patch.py`: the optional
+`sglang.srt.runtime_context.get_flags` API is imported lazily. SGLang builds
+without that API can use the default DP-attention-disabled capture path;
+requesting DP attention still fails explicitly. This patch does not change
+captured tensors or the training algorithm.
 
 Production launchers use `scripts/generate_eagle3_config.py` to apply those
 same rules to the selected `TARGET_MODEL_PATH`; the checked-in 3B/7B files are
