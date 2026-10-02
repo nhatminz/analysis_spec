@@ -105,4 +105,16 @@ bootstrap intervals, and `aal_policy_lag.png` with the zero line. The
 per-response records mark the stale rollout `used_for_grpo=true`; both shadow
 branches are false. Protocol v3 results cannot be mixed with older results in
 one `OUTPUT_DIR`. For boundaries `1,5,10`, the default target-update budget is
-11 so boundary 10 can be evaluated on a real subsequent GRPO update.
+11 so boundary 10 can be evaluated on a real subsequent GRPO update. Plotting
+is a derived, best-effort artifact: a missing or broken Matplotlib installation
+is recorded in `plot_status.json` and does not abort training or invalidate the
+JSONL/CSV results. When Matplotlib is installed, the derived artifact is
+`aal_policy_lag.png` with the zero line.
+
+After installing Matplotlib, regenerate a skipped plot without rerunning the
+GPU experiment:
+
+```bash
+python fastgrpo/policy_lag_analysis.py --mode plot \
+  --output-dir /path/to/run/analysis
+```

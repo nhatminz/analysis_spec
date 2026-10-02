@@ -207,65 +207,81 @@ class BoundaryJournal:
         atomic_json(self.path, self.payload)
 
 
-def write_results(output_dir: Path, per_response: Sequence[Mapping], summaries: Sequence[BranchSummary]) -> None:
+def write_results(
+    output_dir: Path,
+    per_response: Sequence[Mapping],
+    summaries: Sequence[BranchSummary],
+) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     response_path = output_dir / "per_response.jsonl"
-    response_tmp = response_path.with_suffix(response_path.suffix + ".tmp")
-    with response_tmp.open("w", encoding="utf-8") as stream:
-        for row in per_response:
-            stream.write(json.dumps(row, sort_keys=True) + "\n")
-    os.replace(response_tmp, response_path)
+    atomic_text(
+        response_path,
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in per_response),
+    )
     rows = [asdict(item) for item in summaries]
     summary_jsonl = output_dir / "summary.jsonl"
-    summary_tmp = summary_jsonl.with_suffix(summary_jsonl.suffix + ".tmp")
-    with summary_tmp.open("w", encoding="utf-8") as stream:
-        for row in rows:
-            stream.write(json.dumps(row, sort_keys=True) + "\n")
-    os.replace(summary_tmp, summary_jsonl)
+    atomic_text(
+        summary_jsonl,
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+    )
     if rows:
-        summary_csv = output_dir / "summary.csv"
-        csv_tmp = summary_csv.with_suffix(summary_csv.suffix + ".tmp")
-        with csv_tmp.open("w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-            writer.writeheader()
-            writer.writerows(rows)
-        os.replace(csv_tmp, summary_csv)
-    plot_results(rows, output_dir / "aal_policy_lag.png")
+        stream = io.StringIO(newline="")
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+        atomic_text(output_dir / "summary.csv", stream.getvalue())
+    plot_status = plot_results(rows, output_dir / "aal_policy_lag.png")
+    atomic_json(output_dir / "plot_status.json", plot_status)
+    return plot_status
 
 
-def plot_results(rows: Sequence[Mapping], path: Path) -> None:
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        raise RuntimeError("matplotlib is required to export the policy-lag plot") from exc
+def plot_results(rows: Sequence[Mapping], path: Path) -> dict:
+    """Best-effort rendering of the derived policy-lag plot."""
     if not rows:
-        return
-    grouped = {}
-    for row in rows:
-        grouped.setdefault((int(row["policy_step"]), row["branch"]), []).append(float(row["aal"]))
-    steps = sorted({key[0] for key in grouped})
-    base = [np.mean(grouped[(step, "base")]) for step in steps] if all((step, "base") in grouped for step in steps) else None
-    stale = [np.mean(grouped[(step, "stale")]) for step in steps]
-    fresh = [np.mean(grouped[(step, "fresh")]) for step in steps]
-    delta = [f - s for s, f in zip(stale, fresh)]
-    delta_rows = [next(row for row in rows if int(row["policy_step"]) == step and row["branch"] == "fresh") for step in steps]
-    low = [d - float(row["ci_low"]) if row.get("ci_low") is not None else 0 for d, row in zip(delta, delta_rows)]
-    high = [float(row["ci_high"]) - d if row.get("ci_high") is not None else 0 for d, row in zip(delta, delta_rows)]
-    figure, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
-    axes[0].plot(steps, stale, marker="o", label="stale supervision")
-    axes[0].plot(steps, fresh, marker="o", label="fresh supervision")
-    if base is not None:
-        axes[0].plot(steps, base, marker="o", label="draft before branch update")
-    axes[0].set_ylabel("AAL (root/bonus included)")
-    axes[0].legend()
-    axes[1].axhline(0.0, color="black", linewidth=1)
-    axes[1].errorbar(steps, delta, yerr=[low, high], marker="o", capsize=3)
-    axes[1].set_ylabel("delta AAL (fresh - stale)")
-    axes[1].set_xlabel("target update boundary (next real GRPO rollout)")
-    figure.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, dpi=180)
-    plt.close(figure)
+        return {"status": "skipped", "reason": "no summary rows", "path": str(path)}
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        warnings.warn(f"Skipping optional policy-lag plot: {exc}", RuntimeWarning, stacklevel=2)
+        return {"status": "skipped", "reason": f"{type(exc).__name__}: {exc}", "path": str(path)}
+    figure = None
+    try:
+        grouped = {}
+        for row in rows:
+            grouped.setdefault((int(row["policy_step"]), row["branch"]), []).append(float(row["aal"]))
+        steps = sorted({key[0] for key in grouped})
+        base = [np.mean(grouped[(step, "base")]) for step in steps] if all((step, "base") in grouped for step in steps) else None
+        stale = [np.mean(grouped[(step, "stale")]) for step in steps]
+        fresh = [np.mean(grouped[(step, "fresh")]) for step in steps]
+        delta = [f - s for s, f in zip(stale, fresh)]
+        delta_rows = [next(row for row in rows if int(row["policy_step"]) == step and row["branch"] == "fresh") for step in steps]
+        low = [d - float(row["ci_low"]) if row.get("ci_low") is not None else 0 for d, row in zip(delta, delta_rows)]
+        high = [float(row["ci_high"]) - d if row.get("ci_high") is not None else 0 for d, row in zip(delta, delta_rows)]
+        figure, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
+        axes[0].plot(steps, stale, marker="o", label="stale supervision")
+        axes[0].plot(steps, fresh, marker="o", label="fresh supervision")
+        if base is not None:
+            axes[0].plot(steps, base, marker="o", label="draft before branch update")
+        axes[0].set_ylabel("AAL (root/bonus included)")
+        axes[0].legend()
+        axes[1].axhline(0.0, color="black", linewidth=1)
+        axes[1].errorbar(steps, delta, yerr=[low, high], marker="o", capsize=3)
+        axes[1].set_ylabel("delta AAL (fresh - stale)")
+        axes[1].set_xlabel("target update boundary (next real GRPO rollout)")
+        figure.tight_layout()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        figure.savefig(temporary, format="png", dpi=180)
+        os.replace(temporary, path)
+    except Exception as exc:
+        warnings.warn(f"Skipping optional policy-lag plot: {exc}", RuntimeWarning, stacklevel=2)
+        return {"status": "skipped", "reason": f"{type(exc).__name__}: {exc}", "path": str(path)}
+    finally:
+        if figure is not None:
+            plt.close(figure)
+    return {"status": "generated", "path": str(path)}
 
 
 def validate_paths(args) -> None:

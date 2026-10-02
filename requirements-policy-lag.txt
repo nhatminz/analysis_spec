@@ -9,5 +9,6 @@
 # Transformers 5.8.x is accepted by the launcher's concrete API checks; the
 # installed 5.8.1 build does not need to be upgraded offline.
 -r requirements.txt
+# Optional at runtime; required only for aal_policy_lag.png.
 matplotlib>=3.7
 pyyaml>=6.0

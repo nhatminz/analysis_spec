@@ -7,6 +7,11 @@ CUDA/PyTorch/SGLang binaries are not vendored: the offline image must already
 provide the versions in `DEPENDENCIES_POLICY_LAG.md` (or an administrator must
 provide a local wheelhouse).
 
+Matplotlib is optional at runtime. If it is absent, the launcher warns before
+loading the model and still writes all JSONL/CSV/checkpoint results; only
+`aal_policy_lag.png` is skipped and the reason is saved to
+`analysis/plot_status.json`.
+
 Expected placement:
 
 ```text
@@ -145,3 +150,15 @@ Successful stages are reused. `RESUME_PRETRAIN=true`, `RESUME=true`, and
 `ANALYSIS_RESUME=true` are defaults. Protocol v3 refuses to mix next-rollout
 results with older analyses in one output directory: set a new
 `OUTPUT_DIR` (and `RESUME=false` for a fresh training trajectory).
+Use a new output directory for a genuinely new experiment instead of
+overwriting an existing run.
+
+The analysis directory also contains `plot_status.json`. The PNG is present
+only when Matplotlib can render it.
+
+After Matplotlib is installed into the same `PYTHON_BIN` environment, a skipped
+PNG can be generated without rerunning training:
+
+```bash
+"$PYTHON_BIN" policy_lag_analysis.py --mode plot --output-dir /path/to/run/analysis
+```
