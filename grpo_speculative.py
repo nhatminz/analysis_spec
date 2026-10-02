@@ -21,6 +21,7 @@ from helper.eagle3_specforge import Eagle3FastGRPOAdapter
 from policy_lag_analysis import (
     BranchSummary,
     bootstrap_delta_by_prompt,
+    load_completed_results,
     state_digest,
     teacher_shift_tv,
     weighted_aal,
@@ -352,21 +353,9 @@ analysis_completed = set()
 analysis_per_response = []
 analysis_summaries = []
 if policy_lag_output_dir and _as_bool(args.analysis_resume):
-    for completed_path in Path(policy_lag_output_dir).glob('boundaries/step_*/complete.json'):
-        try:
-            analysis_completed.add(int(json.loads(completed_path.read_text())['policy_step']))
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            pass
-    response_file = Path(policy_lag_output_dir) / 'per_response.jsonl'
-    summary_jsonl_file = Path(policy_lag_output_dir) / 'summary.jsonl'
-    if response_file.is_file():
-        analysis_per_response = [json.loads(line) for line in response_file.read_text().splitlines() if line.strip()]
-    if summary_jsonl_file.is_file():
-        analysis_summaries = [
-            BranchSummary(**json.loads(line))
-            for line in summary_jsonl_file.read_text().splitlines()
-            if line.strip()
-        ]
+    analysis_completed, analysis_per_response, analysis_summaries = load_completed_results(
+        Path(policy_lag_output_dir)
+    )
 if analysis_enabled and args.draft_backend != 'eagle3':
     raise ValueError('policy-lag analysis requires --draft_backend=eagle3')
 if analysis_enabled and draft_accumulation_steps != 1:

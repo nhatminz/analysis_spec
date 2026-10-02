@@ -11,11 +11,13 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import os
 import random
 import subprocess
 import sys
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -31,6 +33,13 @@ def atomic_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def atomic_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
     os.replace(temporary, path)
 
 
@@ -176,6 +185,44 @@ class BranchSummary:
     ci_high: float | None = None
 
 
+def load_completed_results(output_dir: Path) -> tuple[set[int], list[dict], list[BranchSummary]]:
+    """Load only exports backed by a completed boundary marker.
+
+    Result files are written before ``complete.json``. A process interruption
+    (including a plotting failure in older versions) can therefore leave valid
+    JSONL rows for an incomplete boundary. Reusing those rows and then
+    recomputing the boundary would duplicate its measurements.
+    """
+    completed: set[int] = set()
+    for completed_path in output_dir.glob("boundaries/step_*/complete.json"):
+        try:
+            payload = json.loads(completed_path.read_text(encoding="utf-8"))
+            completed.add(int(payload["policy_step"]))
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            # A missing/malformed marker is not a completed transaction.
+            continue
+
+    def read_jsonl(path: Path) -> list[dict]:
+        if not path.is_file():
+            return []
+        records = []
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+                policy_step = int(record["policy_step"])
+            except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                raise ValueError(f"invalid result row at {path}:{line_number}: {exc}") from exc
+            if policy_step in completed:
+                records.append(record)
+        return records
+
+    per_response = read_jsonl(output_dir / "per_response.jsonl")
+    summaries = [BranchSummary(**row) for row in read_jsonl(output_dir / "summary.jsonl")]
+    return completed, per_response, summaries
+
+
 class BoundaryJournal:
     """Small resumable state machine; completed stages are never repeated."""
 
@@ -202,55 +249,101 @@ class BoundaryJournal:
         atomic_json(self.path, self.payload)
 
 
-def write_results(output_dir: Path, per_response: Sequence[Mapping], summaries: Sequence[BranchSummary]) -> None:
+def write_results(
+    output_dir: Path,
+    per_response: Sequence[Mapping],
+    summaries: Sequence[BranchSummary],
+) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     response_path = output_dir / "per_response.jsonl"
-    response_path.write_text("", encoding="utf-8")
-    for row in per_response:
-        append_jsonl(response_path, row)
+    atomic_text(
+        response_path,
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in per_response),
+    )
     rows = [asdict(item) for item in summaries]
     summary_jsonl = output_dir / "summary.jsonl"
-    summary_jsonl.write_text("", encoding="utf-8")
-    for row in rows:
-        append_jsonl(summary_jsonl, row)
+    atomic_text(
+        summary_jsonl,
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+    )
     if rows:
-        with (output_dir / "summary.csv").open("w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-            writer.writeheader()
-            writer.writerows(rows)
-    plot_results(rows, output_dir / "aal_policy_lag.png")
+        stream = io.StringIO(newline="")
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+        atomic_text(output_dir / "summary.csv", stream.getvalue())
+    plot_status = plot_results(rows, output_dir / "aal_policy_lag.png")
+    atomic_json(output_dir / "plot_status.json", plot_status)
+    return plot_status
 
 
-def plot_results(rows: Sequence[Mapping], path: Path) -> None:
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError as exc:
-        raise RuntimeError("matplotlib is required to export the policy-lag plot") from exc
+def plot_results(rows: Sequence[Mapping], path: Path) -> dict:
+    """Best-effort rendering of the derived PNG artifact.
+
+    JSONL/CSV and boundary checkpoints are the experiment results. Plotting is
+    intentionally non-fatal so a missing or broken optional visualization
+    dependency cannot discard an expensive GPU run.
+    """
     if not rows:
-        return
-    grouped = {}
-    for row in rows:
-        grouped.setdefault((int(row["policy_step"]), row["branch"]), []).append(float(row["aal"]))
-    steps = sorted({key[0] for key in grouped})
-    stale = [np.mean(grouped[(step, "stale")]) for step in steps]
-    fresh = [np.mean(grouped[(step, "fresh")]) for step in steps]
-    delta = [f - s for s, f in zip(stale, fresh)]
-    delta_rows = [next(row for row in rows if int(row["policy_step"]) == step and row["branch"] == "fresh") for step in steps]
-    low = [d - float(row["ci_low"]) if row.get("ci_low") is not None else 0 for d, row in zip(delta, delta_rows)]
-    high = [float(row["ci_high"]) - d if row.get("ci_high") is not None else 0 for d, row in zip(delta, delta_rows)]
-    figure, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
-    axes[0].plot(steps, stale, marker="o", label="stale supervision")
-    axes[0].plot(steps, fresh, marker="o", label="fresh supervision")
-    axes[0].set_ylabel("AAL (root/bonus included)")
-    axes[0].legend()
-    axes[1].axhline(0.0, color="black", linewidth=1)
-    axes[1].errorbar(steps, delta, yerr=[low, high], marker="o", capsize=3)
-    axes[1].set_ylabel("delta AAL (fresh - stale)")
-    axes[1].set_xlabel("policy update boundary t")
-    figure.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(path, dpi=180)
-    plt.close(figure)
+        return {"status": "skipped", "reason": "no summary rows", "path": str(path)}
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        message = (
+            f"Skipping optional policy-lag plot {path}: "
+            f"{type(exc).__name__}: {exc}. JSONL/CSV results were exported."
+        )
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
+        return {
+            "status": "skipped",
+            "reason": f"{type(exc).__name__}: {exc}",
+            "path": str(path),
+        }
+
+    figure = None
+    try:
+        grouped = {}
+        for row in rows:
+            grouped.setdefault((int(row["policy_step"]), row["branch"]), []).append(float(row["aal"]))
+        steps = sorted({key[0] for key in grouped})
+        stale = [np.mean(grouped[(step, "stale")]) for step in steps]
+        fresh = [np.mean(grouped[(step, "fresh")]) for step in steps]
+        delta = [f - s for s, f in zip(stale, fresh)]
+        delta_rows = [next(row for row in rows if int(row["policy_step"]) == step and row["branch"] == "fresh") for step in steps]
+        low = [d - float(row["ci_low"]) if row.get("ci_low") is not None else 0 for d, row in zip(delta, delta_rows)]
+        high = [float(row["ci_high"]) - d if row.get("ci_high") is not None else 0 for d, row in zip(delta, delta_rows)]
+        figure, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
+        axes[0].plot(steps, stale, marker="o", label="stale supervision")
+        axes[0].plot(steps, fresh, marker="o", label="fresh supervision")
+        axes[0].set_ylabel("AAL (root/bonus included)")
+        axes[0].legend()
+        axes[1].axhline(0.0, color="black", linewidth=1)
+        axes[1].errorbar(steps, delta, yerr=[low, high], marker="o", capsize=3)
+        axes[1].set_ylabel("delta AAL (fresh - stale)")
+        axes[1].set_xlabel("policy update boundary t")
+        figure.tight_layout()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        figure.savefig(temporary, format="png", dpi=180)
+        os.replace(temporary, path)
+    except Exception as exc:
+        message = (
+            f"Skipping optional policy-lag plot {path}: "
+            f"{type(exc).__name__}: {exc}. JSONL/CSV results were exported."
+        )
+        warnings.warn(message, RuntimeWarning, stacklevel=2)
+        return {
+            "status": "skipped",
+            "reason": f"{type(exc).__name__}: {exc}",
+            "path": str(path),
+        }
+    finally:
+        if figure is not None:
+            plt.close(figure)
+    return {"status": "generated", "path": str(path)}
 
 
 def validate_paths(args) -> None:
@@ -284,7 +377,7 @@ def dependency_report(repo: Path) -> dict:
         ).strip()
     except Exception as exc:
         report["fastgrpo_commit_error"] = str(exc)
-    for module in ("torch", "transformers", "peft", "datasets", "specforge"):
+    for module in ("torch", "transformers", "peft", "datasets", "specforge", "matplotlib"):
         try:
             imported = __import__(module)
             report[module] = getattr(imported, "__version__", "installed")
@@ -386,7 +479,7 @@ def smoke_test(output_dir: Path) -> None:
 
 def build_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["validate", "smoke", "dependencies"], required=True)
+    parser.add_argument("--mode", choices=["validate", "smoke", "dependencies", "plot"], required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-dir", default="")
     parser.add_argument("--target-adapter", default="")
@@ -406,10 +499,27 @@ def main():
         smoke_test(output)
         print(f"Smoke test passed: {output}")
         return
+    if args.mode == "plot":
+        _, _, summaries = load_completed_results(output)
+        status = plot_results(
+            [asdict(item) for item in summaries],
+            output / "aal_policy_lag.png",
+        )
+        atomic_json(output / "plot_status.json", status)
+        if status["status"] != "generated":
+            raise RuntimeError(f"policy-lag plot was not generated: {status['reason']}")
+        print(f"Policy-lag plot generated: {output / 'aal_policy_lag.png'}")
+        return
     report = dependency_report(Path(__file__).resolve().parent)
     atomic_json(output / "dependencies.json", report)
     if args.mode == "validate":
         validate_paths(args)
+        if str(report.get("matplotlib", "")).startswith("MISSING"):
+            print(
+                "WARNING: matplotlib is unavailable; policy-lag JSONL/CSV will "
+                "still be exported, but aal_policy_lag.png will be skipped.",
+                file=sys.stderr,
+            )
         if sys.version_info < (3, 11):
             raise RuntimeError(
                 f'pinned SpecForge requires Python >=3.11; found {sys.version.split()[0]}'

@@ -89,4 +89,15 @@ launcher rejects `NPROC_PER_NODE != 1`.
 
 Outputs include per-boundary base/stale/fresh checkpoints, per-response JSONL,
 summary CSV/JSONL, exact token/optimizer counts, checkpoint/feature policy IDs,
-bootstrap intervals, and `aal_policy_lag.png` with the zero line.
+bootstrap intervals, and (when Matplotlib is installed) `aal_policy_lag.png`
+with the zero line. Plotting is a derived, best-effort artifact: a missing or
+broken Matplotlib installation is recorded in `plot_status.json` and does not
+abort training or invalidate the JSONL/CSV results.
+
+After installing Matplotlib, regenerate a skipped plot without rerunning the
+GPU experiment:
+
+```bash
+python fastgrpo/policy_lag_analysis.py --mode plot \
+  --output-dir /path/to/run/analysis
+```
