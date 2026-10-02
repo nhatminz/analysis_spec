@@ -51,6 +51,15 @@ OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/$MODEL_SLUG/${P
 FORCE_DAPO_SPLIT="${FORCE_DAPO_SPLIT:-false}"
 PREPARE_DAPO_ONLY="${PREPARE_DAPO_ONLY:-false}"
 
+# A partial deployment of the old generic launcher silently resets NUM_EPOCHS
+# and passes analysis flags removed by the next-rollout protocol. Fail before
+# preparing the dataset so the operator can sync both launcher files together.
+if grep -Eq -- '--analysis_(eval_prompts|seeds)([[:space:]]|$)|--num_epochs[[:space:]]+1000000([[:space:]]|$)' "$SCRIPT_DIR/run_policy_lag_analysis.sh"; then
+  echo "Incompatible run_policy_lag_analysis.sh: old policy-lag CLI/epoch settings detected." >&2
+  echo "Sync run_policy_lag_analysis.sh and run_policy_lag_analysis_b200.sh from the same fastgrpo revision." >&2
+  exit 2
+fi
+
 [[ -f "$DAPO_PARQUET" ]] || { echo "DAPO parquet not found: $DAPO_PARQUET" >&2; exit 2; }
 export PYTHONPATH="$SPECFORGE_DIR:$SCRIPT_DIR:$WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
