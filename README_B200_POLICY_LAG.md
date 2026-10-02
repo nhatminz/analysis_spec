@@ -83,10 +83,15 @@ start instead, set both `DRAFT_INITIALIZATION_MODE=pretrained` and
 `INITIAL_DRAFT_CHECKPOINT=/absolute/local/checkpoint`.
 
 The second command deterministically shuffles the English DAPO parquet with
-seed 42, uses exactly 5,000 rows as the GRPO/analysis training pool, and takes
-512 different rows as the held-out pool. Sixteen held-out prompts are evaluated
-per boundary by default; set `EVAL_PROMPTS` up to 512 to change this without
-allowing train/eval overlap.
+seed 42 and uses exactly 5,000 rows as the GRPO/analysis training pool. The
+split utility also creates 512 other rows in `eval.jsonl` for compatibility,
+but the policy-lag AAL analysis does **not** use them. At each selected target
+update boundary it trains stale and fresh draft branches; on the **next GRPO
+batch**, it compares their AAL under the same target and prompts. The stale
+rollout is the real rollout used to update target again; fresh and base are
+shadow controls. `ANALYSIS_BOUNDARIES=1,5,10` refers to actual target optimizer
+updates; `TOTAL_POLICY_STEPS=11` leaves an update after boundary 10 for its
+live measurement.
 
 Useful B200 overrides:
 
@@ -131,11 +136,12 @@ DAPO split and policy-lag results:
 ├── dapo_math_seed42/{train.jsonl,eval.jsonl,split_manifest.json}
 └── qwen2_5_3b_instruct/<pretrain-run-id>_dapo5k/
     ├── analysis/{per_response.jsonl,summary.jsonl,summary.csv,aal_policy_lag.png}
-    ├── analysis/boundaries/step_*/{phi_base.pt,draft_stale.pt,draft_fresh.pt,complete.json}
+    ├── analysis/boundaries/step_*/{phi_base.pt,draft_stale.pt,draft_fresh.pt,pending.json,complete.json}
     ├── checkpoints/latest.pt
     └── logs/{console.log,train.jsonl,summary.json,summary.txt}
 ```
 
 Successful stages are reused. `RESUME_PRETRAIN=true`, `RESUME=true`, and
-`ANALYSIS_RESUME=true` are defaults. Use a new output directory for a genuinely
-new experiment instead of overwriting an existing run.
+`ANALYSIS_RESUME=true` are defaults. Protocol v3 refuses to mix next-rollout
+results with older analyses in one output directory: set a new
+`OUTPUT_DIR` (and `RESUME=false` for a fresh training trajectory).

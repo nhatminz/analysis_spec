@@ -20,6 +20,7 @@ from helper.specualtive_generate import speculative_generate
 from helper.eagle3_specforge import Eagle3FastGRPOAdapter
 from policy_lag_analysis import (
     BranchSummary,
+    atomic_json,
     bootstrap_delta_by_prompt,
     state_digest,
     teacher_shift_tv,
@@ -116,7 +117,10 @@ def _prune_checkpoints(checkpoint_dir, keep_last):
     if keep_last <= 0:
         return
     checkpoint_dir = Path(checkpoint_dir)
-    checkpoints = sorted(checkpoint_dir.glob("step*.pt"), key=lambda p: p.stat().st_mtime)
+    checkpoints = sorted(
+        [*checkpoint_dir.glob("step*.pt"), *checkpoint_dir.glob("target*.pt")],
+        key=lambda p: p.stat().st_mtime,
+    )
     for old_path in checkpoints[:-keep_last]:
         old_path.unlink(missing_ok=True)
 
@@ -148,6 +152,7 @@ def save_training_checkpoint(
     draft_accumulated_step,
     batch_data,
     keep_last,
+    target_optimizer_steps=None,
 ):
     checkpoint_dir = Path(checkpoint_dir)
     state = {
@@ -155,6 +160,7 @@ def save_training_checkpoint(
         "epoch": int(epoch),
         "next_batch": int(next_batch),
         "step": int(step),
+        "target_optimizer_steps": None if target_optimizer_steps is None else int(target_optimizer_steps),
         "used_items": int(used_items),
         "draft_step": int(draft_step),
         "draft_accumulated_step": int(draft_accumulated_step),
@@ -166,7 +172,11 @@ def save_training_checkpoint(
         "rng_state": torch.random.get_rng_state(),
         "cuda_rng_state_all": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
     }
-    checkpoint_path = checkpoint_dir / f"step{int(step)}_epoch{int(epoch) + 1}_batch{int(next_batch)}.pt"
+    checkpoint_label = (
+        f"target{int(target_optimizer_steps)}" if target_optimizer_steps is not None
+        else f"step{int(step)}"
+    )
+    checkpoint_path = checkpoint_dir / f"{checkpoint_label}_epoch{int(epoch) + 1}_batch{int(next_batch)}.pt"
     _atomic_torch_save(state, checkpoint_path)
     _atomic_torch_save(state, checkpoint_dir / "latest.pt")
     _prune_checkpoints(checkpoint_dir, keep_last)
@@ -281,8 +291,6 @@ parser.add_argument('--draft_lr_multiplier', type=float, default=1.0,
 parser.add_argument('--policy_lag_output_dir', type=str, default='')
 parser.add_argument('--analysis_boundaries', type=str, default='')
 parser.add_argument('--analysis_interval', type=int, default=0)
-parser.add_argument('--analysis_eval_prompts', type=int, default=8)
-parser.add_argument('--analysis_seeds', type=str, default='11,29,47')
 parser.add_argument('--analysis_training_token_budget', type=int, default=0)
 parser.add_argument('--analysis_draft_update_steps', type=int, default=1)
 parser.add_argument('--analysis_bootstrap_samples', type=int, default=2000)
@@ -346,8 +354,31 @@ analysis_boundaries = {
     int(item) for item in args.analysis_boundaries.split(',') if item.strip()
 }
 analysis_interval = max(0, int(args.analysis_interval))
-analysis_seeds = [int(item) for item in args.analysis_seeds.split(',') if item.strip()]
 analysis_enabled = bool(policy_lag_output_dir) and bool(analysis_boundaries or analysis_interval)
+if analysis_enabled:
+    analysis_root = Path(policy_lag_output_dir)
+    protocol_path = analysis_root / 'protocol.json'
+    protocol = {
+        'format': 'fastgrpo_policy_lag_protocol_v3',
+        'evaluation_scope': 'next_real_grpo_rollout',
+        'evaluation_target': 'theta_after_update',
+        'fresh_rollout_draft': 'phi_base',
+        'main_trajectory': 'stale_branch_rollout_used_for_grpo',
+        'pairing': 'same_next_batch_and_captured_training_rng',
+    }
+    if protocol_path.is_file():
+        if json.loads(protocol_path.read_text(encoding='utf-8')) != protocol:
+            raise RuntimeError(f'incompatible policy-lag protocol in {protocol_path}; use a new OUTPUT_DIR')
+    elif any((analysis_root / name).exists() for name in ('summary.jsonl', 'per_response.jsonl', 'boundaries')):
+        raise RuntimeError(f'existing policy-lag results have no v2 protocol in {analysis_root}; use a new OUTPUT_DIR')
+    else:
+        atomic_json(protocol_path, protocol)
+    if not _as_bool(args.analysis_resume) and any(
+        (analysis_root / name).exists() for name in ('summary.jsonl', 'per_response.jsonl', 'boundaries')
+    ):
+        raise RuntimeError(
+            f'ANALYSIS_RESUME=false requires a new OUTPUT_DIR; existing results found in {analysis_root}'
+        )
 analysis_completed = set()
 analysis_per_response = []
 analysis_summaries = []
@@ -1069,6 +1100,7 @@ with open(log_file, log_mode, encoding='utf-8') as f:
     pass
 
 step=0
+target_optimizer_steps=0
 used_items=0
 draft_step=0
 draft_accumulated_step=0 
@@ -1126,6 +1158,15 @@ if resume_checkpoint:
         optimizer_draft=optimizer_draft,
     )
     step = int(checkpoint.get("step", 0))
+    if checkpoint.get("target_optimizer_steps") is not None:
+        target_optimizer_steps = int(checkpoint["target_optimizer_steps"])
+    else:
+        # Older checkpoints did not store this counter. AdamW's parameter
+        # states still record the number of committed target updates.
+        target_optimizer_steps = max(
+            (int(state['step']) for state in optimizer_target.state.values() if 'step' in state),
+            default=0,
+        )
     used_items = int(checkpoint.get("used_items", 0))
     draft_step = int(checkpoint.get("draft_step", 0))
     draft_accumulated_step = int(checkpoint.get("draft_accumulated_step", 0))
@@ -1134,7 +1175,7 @@ if resume_checkpoint:
         batch_data.update(saved_batch_data)
     start_epoch = int(checkpoint.get("epoch", 0))
     start_batch = int(checkpoint.get("next_batch", 0))
-    last_checkpoint_step = step
+    last_checkpoint_step = target_optimizer_steps if analysis_enabled else step
     print(
         f"Resumed FastGRPO checkpoint {resume_checkpoint}: "
         f"epoch={start_epoch + 1}, next_batch={start_batch}, "
@@ -1147,6 +1188,7 @@ if resume_checkpoint:
 # A continuation trace uses local counters so --max_grpo_steps=100 means 100
 # newly completed labels even when the restored checkpoint is already at 310.
 trace_start_step = int(step)
+trace_start_target_optimizer_steps = int(target_optimizer_steps)
 trace_start_draft_step = int(draft_step)
 trace_rollout_count = 0
 stop_requested = False
@@ -1164,6 +1206,7 @@ run_config_log = {
     "resume_checkpoint": str(resume_checkpoint),
     "append_log": bool(append_log),
     "source_grpo_step": int(trace_start_step),
+    "source_target_optimizer_steps": int(trace_start_target_optimizer_steps),
     "source_draft_step": int(trace_start_draft_step),
     "max_grpo_steps": int(max_grpo_steps),
     "train_option": str(args.train_option),
@@ -1282,73 +1325,167 @@ def _teacher_tv_from_hidden(old_hidden, new_hidden, valid_mask):
     return total / max(count, 1)
 
 
-def _evaluate_analysis_branch(branch_name, draft_state, eval_batch, policy_step):
-    model.draft_model.load_state_dict(draft_state, strict=True)
-    model.eval()
+def _analysis_rows_from_rollout(branch_name, result, policy_step, epoch, batch_index, *, used_for_grpo):
     rows = []
-    prompt_count = eval_batch['input_ids'].shape[0]
-    for sampling_seed in analysis_seeds:
-        _seed_everything(sampling_seed)
-        with torch.inference_mode():
-            result = speculative_generate(
-                model=model,
-                input_ids=eval_batch['input_ids'].to('cuda'),
-                attention_mask=eval_batch['attention_mask'].to('cuda'),
-                tokenizer=tokenizer,
-                do_sample=True,
-                max_length=max_length,
-                repeated_generate_nums=repeated_generate_nums,
-                temperature=temperature,
-                top_p=top_p,
-                verification_capacity=verification_capacity,
-                max_draft_token_length=max_draft_token_length,
-                max_draft_k=max_draft_k,
-                max_verification_num=max_verification_num,
-                min_draft_token_length=min_draft_token_length,
-                draft_token_length_c=draft_token_length_c,
-                return_all_draft_input=False,
-                statistical_time=False,
-            )
-        for response_index, (accepted, rounds, generated) in enumerate(zip(
-            result['response_accepted_length_sum'],
-            result['response_verification_rounds'],
-            result['response_generated_tokens'],
-        )):
-            rows.append({
-                'policy_step': int(policy_step),
-                'seed': int(sampling_seed),
-                'branch': branch_name,
-                'prompt_id': int(response_index // repeated_generate_nums),
-                'response_index': int(response_index % repeated_generate_nums),
-                'accepted_length_sum': int(accepted),
-                'verification_rounds': int(rounds),
-                'generated_tokens': int(generated),
-            })
-    model.train()
-    model.target_model.eval()
+    lengths = tuple(len(result[key]) for key in (
+        'response_accepted_length_sum', 'response_verification_rounds', 'response_generated_tokens'
+    ))
+    if len(set(lengths)) != 1 or lengths[0] % repeated_generate_nums != 0:
+        raise RuntimeError(f'{branch_name} rollout response metrics are misaligned: {lengths}')
+    for response_index, (accepted, rounds, generated) in enumerate(zip(
+        result['response_accepted_length_sum'],
+        result['response_verification_rounds'],
+        result['response_generated_tokens'],
+    )):
+        rows.append({
+            'policy_step': int(policy_step),
+            'seed': -1,  # The real training RNG is captured, not replaced by a fixed seed.
+            'rng_source': 'captured_training_rng',
+            'branch': branch_name,
+            'evaluation_scope': 'next_real_grpo_rollout',
+            'evaluation_epoch': int(epoch + 1),
+            'evaluation_batch': int(batch_index),
+            'used_for_grpo': bool(used_for_grpo),
+            'prompt_id': int(response_index // repeated_generate_nums),
+            'response_index': int(response_index % repeated_generate_nums),
+            'accepted_length_sum': int(accepted),
+            'verification_rounds': int(rounds),
+            'generated_tokens': int(generated),
+        })
+    if sum(row['accepted_length_sum'] for row in rows) != int(result['total_acc_length']):
+        raise RuntimeError(f'{branch_name} per-response accepted lengths do not match FastGRPO total')
+    if sum(row['verification_rounds'] for row in rows) != int(result['total_decoded_token_num']):
+        raise RuntimeError(f'{branch_name} per-response verification rounds do not match FastGRPO total')
     return rows
 
 
-eval_batch_for_analysis = None
-if analysis_enabled:
-    analysis_eval_path = args.eval_dataset_path or args.dataset_path
-    eval_qas = (
-        get_QAs_from_path(analysis_eval_path, args.eval_split)
-        if analysis_eval_path else get_test_QAs(args.train_option)
-    )
-    eval_qas = eval_qas[:max(1, int(args.analysis_eval_prompts))]
-    train_prompt_ids = {str(row['question']).strip() for row in QAs}
-    eval_prompt_ids = {str(row['question']).strip() for row in eval_qas}
-    overlap = train_prompt_ids & eval_prompt_ids
-    if overlap:
-        raise RuntimeError(
-            'policy-lag evaluation prompts overlap the GRPO training pool; '
-            f'found {len(overlap)} duplicate prompt(s). Configure a disjoint '
-            '--eval_dataset_path.'
+def _evaluate_analysis_branch(branch_name, draft_state, eval_batch, policy_step, epoch, batch_index, rng_state):
+    model.draft_model.load_state_dict(draft_state, strict=True)
+    model.eval()
+    _restore_analysis_rng(rng_state)
+    with torch.inference_mode():
+        result = speculative_generate(
+            model=model,
+            input_ids=eval_batch['input_ids'].to('cuda'),
+            attention_mask=eval_batch['attention_mask'].to('cuda'),
+            tokenizer=tokenizer,
+            do_sample=True,
+            max_length=max_length,
+            repeated_generate_nums=repeated_generate_nums,
+            temperature=temperature,
+            top_p=top_p,
+            verification_capacity=verification_capacity,
+            max_draft_token_length=max_draft_token_length,
+            max_draft_k=max_draft_k,
+            max_verification_num=max_verification_num,
+            min_draft_token_length=min_draft_token_length,
+            draft_token_length_c=draft_token_length_c,
+            return_all_draft_input=False,
+            statistical_time=False,
         )
-    # This held-out split is never inserted into the GRPO buffer.
-    eval_batch_for_analysis = TrainDataCollator(tokenizer, max_prompt_length)(eval_qas)
+    model.train()
+    model.target_model.eval()
+    return _analysis_rows_from_rollout(
+        branch_name, result, policy_step, epoch, batch_index, used_for_grpo=False
+    )
+
+
+def _finalize_next_rollout_analysis(pending, base_rows, stale_rows, fresh_rows, epoch, batch_index,
+                                    next_target_optimizer_step, eval_prompt_batch_id):
+    policy_step = int(pending['policy_step'])
+    if next_target_optimizer_step != policy_step + 1:
+        raise RuntimeError('live rollout was not followed by exactly one target optimizer update')
+    boot = bootstrap_delta_by_prompt(
+        stale_rows, fresh_rows,
+        seed=trace_seed + policy_step,
+        samples=int(args.analysis_bootstrap_samples),
+    )
+    base_aal = weighted_aal(base_rows)[0]
+    analysis_per_response[:] = [
+        row for row in analysis_per_response if int(row['policy_step']) != policy_step
+    ]
+    analysis_summaries[:] = [
+        row for row in analysis_summaries if int(row.policy_step) != policy_step
+    ]
+    analysis_per_response.extend(base_rows + stale_rows + fresh_rows)
+    for branch_name, records in (('base', base_rows), ('stale', stale_rows), ('fresh', fresh_rows)):
+        aal, _, rounds, generated = weighted_aal(records)
+        trained = branch_name != 'base'
+        analysis_summaries.append(BranchSummary(
+            policy_step=policy_step,
+            seed=-1,
+            branch=branch_name,
+            aal=aal,
+            delta_aal=boot['delta_aal'] if branch_name == 'fresh' else None,
+            verification_rounds=rounds,
+            generated_tokens=generated,
+            actual_training_token_count=int(pending['common_training_token_budget']) if trained else 0,
+            optimizer_steps=int(pending['optimizer_steps_per_branch']) if trained else 0,
+            policy_checkpoint_id=pending['policy_checkpoint_id'],
+            draft_checkpoint_id=pending[f'{branch_name}_draft_id'],
+            feature_policy_version=(
+                pending['old_policy_id'] if branch_name == 'stale'
+                else pending['policy_checkpoint_id'] if branch_name == 'fresh'
+                else 'no_supervision'
+            ),
+            teacher_shift_tv=float(pending['teacher_shift_tv']),
+            ci_low=boot['delta_aal_ci_low'] if branch_name == 'fresh' else None,
+            ci_high=boot['delta_aal_ci_high'] if branch_name == 'fresh' else None,
+            delta_vs_base=aal - base_aal if trained else None,
+            evaluation_epoch=int(epoch + 1),
+            evaluation_batch=int(batch_index),
+            used_for_grpo=branch_name == 'stale',
+            evaluation_prompt_batch_id=eval_prompt_batch_id,
+        ))
+    write_results(Path(policy_lag_output_dir), analysis_per_response, analysis_summaries)
+    boundary_dir = Path(policy_lag_output_dir) / 'boundaries' / f'step_{policy_step}'
+    atomic_json(boundary_dir / 'complete.json', {
+        **pending,
+        'evaluation_epoch': int(epoch + 1),
+        'evaluation_batch': int(batch_index),
+        'evaluation_prompt_count': len({row['prompt_id'] for row in stale_rows}),
+        'evaluation_prompt_batch_id': eval_prompt_batch_id,
+        'next_target_optimizer_step': int(next_target_optimizer_step),
+        'stale_rollout_used_for_grpo': True,
+        'main_branch': 'stale',
+    })
+    analysis_completed.add(policy_step)
+
+
+if analysis_enabled:
     Path(policy_lag_output_dir).mkdir(parents=True, exist_ok=True)
+pending_analysis = None
+if analysis_enabled:
+    pending_paths = []
+    for pending_path in Path(policy_lag_output_dir).glob('boundaries/step_*/pending.json'):
+        complete_path = pending_path.parent / 'complete.json'
+        if complete_path.is_file():
+            completion = json.loads(complete_path.read_text(encoding='utf-8'))
+            # Results become durable only with the *following* target
+            # checkpoint. If we resumed an older checkpoint, replay the live
+            # rollout and replace the uncommitted result rows.
+            if int(completion.get('next_target_optimizer_step', 0)) <= target_optimizer_steps:
+                continue
+            analysis_completed.discard(int(completion['policy_step']))
+        metadata = json.loads(pending_path.read_text(encoding='utf-8'))
+        pending_step = int(metadata['policy_step'])
+        if pending_step < target_optimizer_steps:
+            raise RuntimeError(
+                f'unfinished policy-lag boundary {pending_step} predates the resumed '
+                f'target update {target_optimizer_steps}; resume from the matching checkpoint'
+            )
+        if pending_step == target_optimizer_steps:
+            pending_paths.append((pending_path, metadata))
+        # A newer pending artifact can be left by a crash before the checkpoint
+        # was saved. Replaying its boundary will replace it.
+    if len(pending_paths) > 1:
+        raise RuntimeError('multiple pending policy-lag boundaries match the current target checkpoint')
+    if pending_paths:
+        pending_path, pending_analysis = pending_paths[0]
+        if state_digest(_target_lora_state_dict(model.target_model)) != pending_analysis['policy_checkpoint_id']:
+            raise RuntimeError(f'resumed target does not match {pending_path}')
+        if state_digest(model.draft_model.state_dict()) != pending_analysis['stale_draft_id']:
+            raise RuntimeError(f'resumed stale draft does not match {pending_path}')
 
 dataloader=DataLoader(
     QAs,
@@ -1395,6 +1532,10 @@ for epoch in epoch_bar:
         attention_mask=batch['attention_mask'].to('cuda')
         analysis_train_input_ids = input_ids.detach().cpu()
         analysis_train_attention_mask = attention_mask.detach().cpu()
+        analysis_batch = {
+            'input_ids': analysis_train_input_ids,
+            'attention_mask': analysis_train_attention_mask,
+        }
         analysis_base_draft = None
         analysis_base_optimizer = None
         analysis_old_teacher_logits = None
@@ -1411,10 +1552,38 @@ for epoch in epoch_bar:
                 for key, value in _target_lora_state_dict(model.target_model).items()
             }
             analysis_old_policy_id = state_digest(analysis_old_policy_state)
-            analysis_old_teacher_logits = _teacher_prefix_hidden(eval_batch_for_analysis)
+            analysis_old_teacher_logits = _teacher_prefix_hidden(analysis_batch)
+        pending_base_rows = None
+        pending_fresh_rows = None
+        if pending_analysis is not None:
+            pending_step = int(pending_analysis['policy_step'])
+            pending_dir = Path(policy_lag_output_dir) / 'boundaries' / f'step_{pending_step}'
+            if state_digest(_target_lora_state_dict(model.target_model)) != pending_analysis['policy_checkpoint_id']:
+                raise RuntimeError(f'target changed before next rollout for boundary {pending_step}')
+            if state_digest(model.draft_model.state_dict()) != pending_analysis['stale_draft_id']:
+                raise RuntimeError(f'main draft is not the stale branch at boundary {pending_step}')
+            paired_rng = _analysis_rng_state()
+            base_state = torch.load(pending_dir / 'phi_base.pt', map_location='cpu', weights_only=False)['draft_state_dict']
+            fresh_state = torch.load(pending_dir / 'draft_fresh.pt', map_location='cpu', weights_only=False)['draft_state_dict']
+            pending_base_rows = _evaluate_analysis_branch(
+                'base', base_state, analysis_batch, pending_step, epoch, i, paired_rng
+            )
+            pending_fresh_rows = _evaluate_analysis_branch(
+                'fresh', fresh_state, analysis_batch, pending_step, epoch, i, paired_rng
+            )
+            model.draft_model.load_state_dict(analysis_base_draft, strict=True)
+            _restore_analysis_rng(paired_rng)
+            if state_digest(model.draft_model.state_dict()) != pending_analysis['stale_draft_id']:
+                raise RuntimeError(f'stale branch was not restored before real GRPO rollout {pending_step}')
+            del base_state, fresh_state
         messages=batch['messages']
         answers=batch['answers']
         
+        pending_draft_was_training = model.draft_model.training if pending_analysis is not None else None
+        if pending_analysis is not None:
+            # Match the shadow rollout mode exactly. Restore train mode before
+            # the real online draft backward pass below.
+            model.eval()
         with torch.inference_mode():
             outputs=speculative_generate(model=model,input_ids=input_ids,attention_mask=attention_mask,tokenizer=tokenizer,
             do_sample=True,max_length=max_length,repeated_generate_nums=repeated_generate_nums,temperature=temperature,top_p=top_p,
@@ -1425,6 +1594,15 @@ for epoch in epoch_bar:
             min_draft_token_length=min_draft_token_length,
             draft_token_length_c=draft_token_length_c,
             return_all_draft_input=True,statistical_time=statistical_time)
+        if pending_analysis is not None:
+            model.draft_model.train(pending_draft_was_training)
+            model.target_model.eval()
+        pending_stale_rows = (
+            _analysis_rows_from_rollout(
+                'stale', outputs, int(pending_analysis['policy_step']), epoch, i,
+                used_for_grpo=True,
+            ) if pending_analysis is not None else None
+        )
         
         prompt_length=input_ids.shape[-1]
         outputs['prompt_length']=prompt_length
@@ -1573,6 +1751,27 @@ for epoch in epoch_bar:
         )
 
         if len(batch_data['messages']) == 0:
+            if pending_analysis is not None:
+                # This rollout cannot update the target, so it is not the
+                # requested live measurement. Retry on the next usable batch.
+                pending_dir = Path(policy_lag_output_dir) / 'boundaries' / f"step_{pending_analysis['policy_step']}"
+                stale_checkpoint = torch.load(
+                    pending_dir / 'draft_stale.pt', map_location='cpu', weights_only=False
+                )
+                model.draft_model.load_state_dict(stale_checkpoint['draft_state_dict'], strict=True)
+                optimizer_draft.load_state_dict(stale_checkpoint['optimizer_state_dict'])
+                optimizer_draft.zero_grad(set_to_none=True)
+                if draft_update_committed:
+                    draft_step -= 1
+                    draft_accumulated_step -= 1
+                with open(log_file, 'a', encoding='utf-8') as stream:
+                    stream.write(json.dumps({
+                        'phase': 'analysis_retry',
+                        'policy_step': int(pending_analysis['policy_step']),
+                        'epoch': int(epoch + 1),
+                        'batch': int(i),
+                        'reason': 'no_reward_variation_no_target_update',
+                    }) + '\n')
             continue 
         
         text=tokenizer.apply_chat_template(batch_data['messages'],tokenize=False,add_generation_prompt=False)
@@ -1720,16 +1919,31 @@ for epoch in epoch_bar:
                 
             optimizer_target.step()
             optimizer_target.zero_grad(set_to_none=True)
+            target_optimizer_steps += 1
+            if pending_analysis is not None:
+                if analysis_old_policy_id != pending_analysis['policy_checkpoint_id']:
+                    raise RuntimeError('live rollout target did not match the pending policy-lag boundary')
+                _finalize_next_rollout_analysis(
+                    pending_analysis, pending_base_rows, pending_stale_rows,
+                    pending_fresh_rows, epoch, i, target_optimizer_steps,
+                    state_digest(analysis_batch['input_ids']),
+                )
+                pending_analysis = None
 
             if (
                 analysis_enabled
-                and _analysis_boundary(int(step))
-                and int(step) not in analysis_completed
+                and _analysis_boundary(target_optimizer_steps)
+                and target_optimizer_steps not in analysis_completed
+                and (
+                    max_grpo_steps == 0
+                    or target_optimizer_steps - trace_start_target_optimizer_steps < max_grpo_steps
+                )
             ):
+                analysis_step = target_optimizer_steps
                 analysis_main_rng = _analysis_rng_state()
                 target_was_training = model.target_model.training
                 draft_was_training = model.draft_model.training
-                boundary_dir = Path(policy_lag_output_dir) / 'boundaries' / f'step_{int(step)}'
+                boundary_dir = Path(policy_lag_output_dir) / 'boundaries' / f'step_{analysis_step}'
                 boundary_dir.mkdir(parents=True, exist_ok=True)
                 current_policy_id = state_digest(_target_lora_state_dict(model.target_model))
                 current_policy_state = {
@@ -1737,15 +1951,17 @@ for epoch in epoch_bar:
                     for key, value in _target_lora_state_dict(model.target_model).items()
                 }
                 target_digest_before_analysis = current_policy_id
-                new_teacher_logits = _teacher_prefix_hidden(eval_batch_for_analysis)
+                new_teacher_logits = _teacher_prefix_hidden(analysis_batch)
                 teacher_tv = _teacher_tv_from_hidden(
                     analysis_old_teacher_logits,
                     new_teacher_logits,
-                    eval_batch_for_analysis['attention_mask'],
+                    analysis_train_attention_mask,
                 )
                 # Fresh R_{t+1}: same training prompts, current target, separate RNG;
-                # it is never added to batch_data/the GRPO replay buffer.
-                _seed_everything(trace_seed + int(step) * 1009)
+                # use the *same base draft* as R_t to isolate the policy update.
+                # It is never added to batch_data/the GRPO replay buffer.
+                model.draft_model.load_state_dict(analysis_base_draft, strict=True)
+                _seed_everything(trace_seed + analysis_step * 1009)
                 with torch.inference_mode():
                     fresh_outputs = speculative_generate(
                         model=model,
@@ -1779,7 +1995,7 @@ for epoch in epoch_bar:
                 if configured_budget > 0:
                     common_budget = min(common_budget, configured_budget)
                 if common_budget <= 0:
-                    raise RuntimeError(f'boundary {step} has no common valid supervised-token budget')
+                    raise RuntimeError(f'boundary {analysis_step} has no common valid supervised-token budget')
                 branch_update_steps = int(args.analysis_draft_update_steps)
                 if common_budget < branch_update_steps:
                     raise RuntimeError(
@@ -1787,8 +2003,8 @@ for epoch in epoch_bar:
                         f'optimizer steps {branch_update_steps}'
                     )
                 torch.save({
-                    'format': 'fastgrpo_policy_lag_base_v1',
-                    'policy_step': int(step),
+                    'format': 'fastgrpo_policy_lag_base_v3',
+                    'policy_step': analysis_step,
                     'policy_t_id': analysis_old_policy_id,
                     'policy_t_plus_1_id': current_policy_id,
                     'policy_t_lora_state_dict': analysis_old_policy_state,
@@ -1801,7 +2017,7 @@ for epoch in epoch_bar:
                 }, boundary_dir / 'phi_base.pt')
 
                 branch_states = {}
-                branch_optimizer_states = {}
+                stale_optimizer_state = None
                 branch_losses = {}
                 for branch_name, branch_outputs, feature_policy in (
                     ('stale', outputs, analysis_old_policy_id),
@@ -1839,74 +2055,57 @@ for epoch in epoch_bar:
                         key: value.detach().cpu().clone()
                         for key, value in model.draft_model.state_dict().items()
                     }
-                    branch_optimizer_states[branch_name] = deepcopy(optimizer_draft.state_dict())
+                    branch_optimizer_state = deepcopy(optimizer_draft.state_dict())
+                    if branch_name == 'stale':
+                        stale_optimizer_state = branch_optimizer_state
                     branch_losses[branch_name] = loss_totals
                     torch.save({
-                        'format': 'fastgrpo_policy_lag_branch_v1',
+                        'format': 'fastgrpo_policy_lag_branch_v3',
                         'branch': branch_name,
-                        'policy_step': int(step),
+                        'policy_step': analysis_step,
                         'feature_policy_version': feature_policy,
                         'base_digest': state_digest(analysis_base_draft),
                         'draft_state_dict': branch_states[branch_name],
-                        'optimizer_state_dict': branch_optimizer_states[branch_name],
+                        'optimizer_state_dict': branch_optimizer_state,
                         'scheduler_state_dict': None,
                         'actual_training_token_count': int(common_budget),
                         'optimizer_steps': branch_update_steps,
                         'losses': branch_losses[branch_name],
                     }, boundary_dir / f'draft_{branch_name}.pt')
 
-                stale_rows = _evaluate_analysis_branch('stale', branch_states['stale'], eval_batch_for_analysis, step)
-                fresh_rows = _evaluate_analysis_branch('fresh', branch_states['fresh'], eval_batch_for_analysis, step)
-                analysis_per_response.extend(stale_rows + fresh_rows)
-                for sampling_seed in analysis_seeds:
-                    seed_stale = [row for row in stale_rows if row['seed'] == sampling_seed]
-                    seed_fresh = [row for row in fresh_rows if row['seed'] == sampling_seed]
-                    boot = bootstrap_delta_by_prompt(
-                        seed_stale,
-                        seed_fresh,
-                        seed=trace_seed + sampling_seed + int(step),
-                        samples=int(args.analysis_bootstrap_samples),
-                    )
-                    for branch_name, records in (('stale', seed_stale), ('fresh', seed_fresh)):
-                        aal, _, rounds, generated = weighted_aal(records)
-                        analysis_summaries.append(BranchSummary(
-                            policy_step=int(step),
-                            seed=int(sampling_seed),
-                            branch=branch_name,
-                            aal=aal,
-                            delta_aal=boot['delta_aal'] if branch_name == 'fresh' else None,
-                            verification_rounds=rounds,
-                            generated_tokens=generated,
-                            actual_training_token_count=int(common_budget),
-                            optimizer_steps=branch_update_steps,
-                            policy_checkpoint_id=current_policy_id,
-                            draft_checkpoint_id=state_digest(branch_states[branch_name]),
-                            feature_policy_version=(analysis_old_policy_id if branch_name == 'stale' else current_policy_id),
-                            teacher_shift_tv=teacher_tv,
-                            ci_low=boot['delta_aal_ci_low'] if branch_name == 'fresh' else None,
-                            ci_high=boot['delta_aal_ci_high'] if branch_name == 'fresh' else None,
-                        ))
-                write_results(Path(policy_lag_output_dir), analysis_per_response, analysis_summaries)
-                # Continue the real trajectory with stale, not fresh. Restore all
-                # stochastic/module state so analysis cannot perturb GRPO.
+                # The stale branch is now the real training draft. Its next
+                # rollout is the measured rollout *and* the next GRPO input.
                 model.draft_model.load_state_dict(branch_states['stale'], strict=True)
-                optimizer_draft.load_state_dict(branch_optimizer_states['stale'])
+                optimizer_draft.load_state_dict(stale_optimizer_state)
                 draft_step += branch_update_steps - 1
                 _restore_analysis_rng(analysis_main_rng)
                 model.draft_model.train(draft_was_training)
                 model.target_model.train(target_was_training)
                 if state_digest(_target_lora_state_dict(model.target_model)) != target_digest_before_analysis:
                     raise RuntimeError('target policy changed during policy-lag evaluation')
-                analysis_completed.add(int(step))
-                with (boundary_dir / 'complete.json').open('w', encoding='utf-8') as stream:
-                    json.dump({
-                        'policy_step': int(step),
-                        'base_digest': state_digest(analysis_base_draft),
-                        'common_training_token_budget': int(common_budget),
-                        'optimizer_steps_per_branch': branch_update_steps,
-                        'teacher_shift_tv': teacher_tv,
-                        'main_branch': 'stale',
-                    }, stream, indent=2, sort_keys=True)
+                pending_analysis = {
+                    'format': 'fastgrpo_policy_lag_pending_v3',
+                    'policy_step': analysis_step,
+                    'source_epoch': int(epoch + 1),
+                    'source_batch': int(i),
+                    'source_prompt_batch_id': state_digest(analysis_batch['input_ids']),
+                    'old_policy_id': analysis_old_policy_id,
+                    'policy_checkpoint_id': current_policy_id,
+                    'base_draft_id': state_digest(analysis_base_draft),
+                    'stale_draft_id': state_digest(branch_states['stale']),
+                    'fresh_draft_id': state_digest(branch_states['fresh']),
+                    'common_training_token_budget': int(common_budget),
+                    'optimizer_steps_per_branch': branch_update_steps,
+                    'teacher_shift_tv': teacher_tv,
+                    'evaluation_scope': 'next_real_grpo_rollout',
+                }
+                atomic_json(boundary_dir / 'pending.json', pending_analysis)
+                del (
+                    branch_states, branch_losses, stale_optimizer_state,
+                    branch_optimizer_state, analysis_base_optimizer,
+                    analysis_old_policy_state, current_policy_state,
+                    analysis_old_teacher_logits, new_teacher_logits, fresh_outputs,
+                )
             
             if statistical_time and torch.cuda.is_available():
                 torch.cuda.synchronize()
@@ -1939,6 +2138,7 @@ for epoch in epoch_bar:
                 "step": step,
                 "grpo_step": int(max(0, step - trace_start_step)),
                 "source_grpo_step": int(step),
+                "target_optimizer_steps": int(target_optimizer_steps),
                 "rollout_count": int(trace_rollout_count),
                 "used_items" : used_items ,
                 "train_dataset_full_size": full_train_samples,
@@ -2019,11 +2219,13 @@ for epoch in epoch_bar:
             model.save_model(f"{saved_draft_model_dir}/step{step}.pth")
             model.target_model.save_pretrained(f'{saved_model_dir}/step{step}')
 
+        checkpoint_step = target_optimizer_steps if analysis_enabled else step
+        checkpoint_start_step = trace_start_target_optimizer_steps if analysis_enabled else trace_start_step
         if (
             save_checkpoint_steps > 0
-            and (step - trace_start_step) > 0
-            and (step - trace_start_step) % save_checkpoint_steps == 0
-            and step != last_checkpoint_step
+            and (checkpoint_step - checkpoint_start_step) > 0
+            and (checkpoint_step - checkpoint_start_step) % save_checkpoint_steps == 0
+            and checkpoint_step != last_checkpoint_step
         ):
             save_training_checkpoint(
                 checkpoint_dir,
@@ -2038,13 +2240,14 @@ for epoch in epoch_bar:
                 draft_accumulated_step=draft_accumulated_step,
                 batch_data=batch_data,
                 keep_last=keep_last_checkpoints,
+                target_optimizer_steps=target_optimizer_steps if analysis_enabled else None,
             )
-            last_checkpoint_step = step
+            last_checkpoint_step = checkpoint_step
 
-        completed_grpo_steps = max(0, int(step - trace_start_step))
+        completed_grpo_steps = max(0, int(checkpoint_step - checkpoint_start_step))
         if max_grpo_steps > 0 and completed_grpo_steps >= max_grpo_steps:
             stop_requested = True
-            if step != last_checkpoint_step:
+            if checkpoint_step != last_checkpoint_step:
                 save_training_checkpoint(
                     checkpoint_dir,
                     model=model,
@@ -2058,13 +2261,15 @@ for epoch in epoch_bar:
                     draft_accumulated_step=draft_accumulated_step,
                     batch_data=batch_data,
                     keep_last=keep_last_checkpoints,
+                    target_optimizer_steps=target_optimizer_steps if analysis_enabled else None,
                 )
-                last_checkpoint_step = step
+                last_checkpoint_step = checkpoint_step
             with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps({
                     "phase": "trace_stop",
                     "grpo_step": int(completed_grpo_steps),
                     "source_grpo_step": int(step),
+                    "target_optimizer_steps": int(target_optimizer_steps),
                     "rollout_count": int(trace_rollout_count),
                     "max_grpo_steps": int(max_grpo_steps),
                     "reason": "max_grpo_steps",
@@ -2074,6 +2279,12 @@ for epoch in epoch_bar:
     if stop_requested:
         break
             
+
+if pending_analysis is not None:
+    raise RuntimeError(
+        f"policy-lag boundary {pending_analysis['policy_step']} has no subsequent "
+        'usable GRPO rollout; increase NUM_EPOCHS or TOTAL_POLICY_STEPS and resume'
+    )
 
 model.save_model(f"{saved_draft_model_dir}/step{step}.pth")
 model.target_model.save_pretrained(f'{saved_model_dir}/step{step}')
@@ -2091,6 +2302,7 @@ if checkpoint_dir and not stop_requested:
         draft_accumulated_step=draft_accumulated_step,
         batch_data=batch_data,
         keep_last=keep_last_checkpoints,
+        target_optimizer_steps=target_optimizer_steps if analysis_enabled else None,
     )
 
 final_average_accept_length = (
@@ -2108,9 +2320,14 @@ total_wall_time = time.time() - start_time
 summary = {
     "run_name": version_name,
     "final_step": int(step),
+    "target_optimizer_steps": int(target_optimizer_steps),
     "used_items": int(used_items),
     "draft_step": int(draft_step),
-    "completed_grpo_steps": int(max(0, step - trace_start_step)),
+    "completed_grpo_steps": int(max(
+        0,
+        target_optimizer_steps - trace_start_target_optimizer_steps
+        if analysis_enabled else step - trace_start_step,
+    )),
     "max_grpo_steps": int(max_grpo_steps),
     "stopped_by_max_grpo_steps": bool(stop_requested),
     "rollout_count": int(trace_rollout_count),

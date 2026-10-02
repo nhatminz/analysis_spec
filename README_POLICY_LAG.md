@@ -11,15 +11,24 @@ feature projection, KL/LK objective, and training-time TTT unrolling are called
 directly. `helper/eagle3_specforge.py` is only the target-vocabulary and flat-KV
 runtime adapter needed by the unchanged FastGRPO verifier.
 
-At boundary `t`, the run saves `theta_t`'s ID and `phi_base` (draft plus
-optimizer; FastGRPO has no draft scheduler, recorded explicitly as `null`), uses
-the already-collected `R_t` for stale supervision, applies the normal GRPO
-update, collects `R_{t+1}` with the new policy on the same training prompts, and
-replays both branches from `phi_base`. Both consume the same valid-token budget
-and make the configured `DRAFT_UPDATE_STEPS` optimizer steps. Evaluation uses held-out test prompts, the same
-current target `theta_{t+1}`, sampler, seeds, batch/concurrency settings, and no
-draft adaptation. It then restores the stale branch and RNG/module state; fresh
-rollouts and evaluation never enter the GRPO buffer.
+At target update boundary `t`, the run saves `theta_t` and `phi_base` (draft plus
+optimizer), uses the just-collected `R_t` for stale supervision, applies GRPO to
+obtain `theta_{t+1}`, and separately collects fresh supervision under
+`theta_{t+1}` on those same source prompts using `phi_base`. Stale and fresh
+branches start from the identical `phi_base`/optimizer, consume the same token
+budget, and take the same number of draft optimizer steps. The stale branch
+becomes the actual training draft.
+
+On the **next usable GRPO batch**, before another target update, the run
+rolls out `phi_base` and fresh as shadow controls under the fixed
+`theta_{t+1}`, using the exact prompts and captured RNG state that the real
+stale rollout then uses. The real stale rollout is measured for AAL and is the
+one passed to GRPO to update `theta_{t+2}`. Shadow rollouts never enter GRPO.
+If a batch has no reward variation and cannot update target, its measurements
+are discarded and the experiment retries on the next usable batch.
+Because stale becomes the live draft, later target updates follow that branch's
+trajectory. This estimates a local next-rollout AAL effect, not a multi-step
+comparison of two independently trained targets.
 
 The primary metric is
 
@@ -31,9 +40,12 @@ FastGRPO `total_acc_length` includes the verified root/bonus target token. AAL
 is therefore `sum(total_acc_length) / sum(total_decoded_token_num)` over all
 sequence verification rounds, never an unweighted mean of batch averages.
 `teacher_shift_tv` is exact full-vocabulary TV in FP32 at temperature 1 before
-top-p/top-k, evaluated on a fixed held-out prefix set. A positive delta means
-fresh supervision helped under this comparison; the code does not assume its
-sign. Confidence intervals use a prompt-cluster bootstrap.
+top-p/top-k, evaluated on the source batch's prompt prefixes. A positive delta
+means fresh supervision helped on the *next actual training batch* under the
+same target; the code does not assume its sign. `delta_vs_base` shows whether
+each trained branch improves over the pre-update draft. Confidence intervals
+for fresh-minus-stale use a prompt-cluster bootstrap over the next batch's
+prompts. This is a local next-rollout diagnostic, not held-out generalization.
 
 ## Install and run
 
@@ -78,10 +90,10 @@ bash fastgrpo/run_policy_lag_analysis.sh
 
 Important overrides include `TARGET_ADAPTER_PATH`,
 `TARGET_RESUME_CHECKPOINT`, `DATASET_PATH`, `TRAIN_OPTION`,
-`ANALYSIS_BOUNDARIES`, `ANALYSIS_INTERVAL`, `TOTAL_POLICY_STEPS`,
+`ANALYSIS_BOUNDARIES`, `ANALYSIS_INTERVAL`, `TOTAL_POLICY_STEPS`, `NUM_EPOCHS`,
 `TRAINING_TOKEN_BUDGET`, `DRAFT_LR`, `TRAIN_BATCH_SIZE`,
-`EVAL_BATCH_SIZE`, `GRADIENT_ACCUMULATION`, `RESPONSES_PER_PROMPT`,
-`MAX_LENGTH`, `TEMPERATURE`, `TOP_P`, `SAMPLING_SEEDS`, and all existing
+`GRADIENT_ACCUMULATION`, `RESPONSES_PER_PROMPT`,
+`MAX_LENGTH`, `TEMPERATURE`, `TOP_P`, and all existing
 FastGRPO concurrency controls. `RESUME=true` and `ANALYSIS_RESUME=true` reuse
 completed main/analysis checkpoints. Multi-process target inference is not
 silently moved to SGLang: this upstream decoder remains single-process and the
@@ -89,4 +101,8 @@ launcher rejects `NPROC_PER_NODE != 1`.
 
 Outputs include per-boundary base/stale/fresh checkpoints, per-response JSONL,
 summary CSV/JSONL, exact token/optimizer counts, checkpoint/feature policy IDs,
-bootstrap intervals, and `aal_policy_lag.png` with the zero line.
+bootstrap intervals, and `aal_policy_lag.png` with the zero line. The
+per-response records mark the stale rollout `used_for_grpo=true`; both shadow
+branches are false. Protocol v3 results cannot be mixed with older results in
+one `OUTPUT_DIR`. For boundaries `1,5,10`, the default target-update budget is
+11 so boundary 10 can be evaluated on a real subsequent GRPO update.

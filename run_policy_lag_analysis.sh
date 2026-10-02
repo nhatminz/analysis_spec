@@ -15,21 +15,19 @@ DRAFT_INITIALIZATION_MODE="${DRAFT_INITIALIZATION_MODE:-pretrained}" # pretraine
 VOCAB_MAPPING="${VOCAB_MAPPING:-}" # empty is valid only for a full-vocabulary draft config
 
 DATASET_PATH="${DATASET_PATH:-$WORKSPACE/data/gsm8k/main}"
-EVAL_DATASET_PATH="${EVAL_DATASET_PATH:-}"
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
-EVAL_SPLIT="${EVAL_SPLIT:-test}"
 TRAIN_OPTION="${TRAIN_OPTION:-gsm8k}"
 OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/qwen25_7b_gsm8k}"
 ANALYSIS_BOUNDARIES="${ANALYSIS_BOUNDARIES:-1,5,10}"
 ANALYSIS_INTERVAL="${ANALYSIS_INTERVAL:-0}"
-TOTAL_POLICY_STEPS="${TOTAL_POLICY_STEPS:-10}"
+TOTAL_POLICY_STEPS="${TOTAL_POLICY_STEPS:-11}" # boundary 10 needs a real next rollout/update
+NUM_EPOCHS="${NUM_EPOCHS:-2}"
 
 TRAINING_TOKEN_BUDGET="${TRAINING_TOKEN_BUDGET:-1024}"
 DRAFT_UPDATE_STEPS="${DRAFT_UPDATE_STEPS:-1}"
 DRAFT_LR="${DRAFT_LR:-1e-6}"
 TARGET_LR="${TARGET_LR:-1e-6}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
-EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
 GRADIENT_ACCUMULATION="${GRADIENT_ACCUMULATION:-4}"
 DRAFT_GRADIENT_ACCUMULATION="${DRAFT_GRADIENT_ACCUMULATION:-1}"
 RESPONSES_PER_PROMPT="${RESPONSES_PER_PROMPT:-8}"
@@ -37,7 +35,6 @@ MAX_LENGTH="${MAX_LENGTH:-2048}"
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
 TEMPERATURE="${TEMPERATURE:-1.0}"
 TOP_P="${TOP_P:-0.95}"
-SAMPLING_SEEDS="${SAMPLING_SEEDS:-11,29,47}"
 TRACE_SEED="${TRACE_SEED:-42}"
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
@@ -59,7 +56,6 @@ DRAFT_TOKEN_LENGTH_C="${DRAFT_TOKEN_LENGTH_C:-0.75}"
 RESUME="${RESUME:-true}"
 SMOKE_TEST="${SMOKE_TEST:-false}"
 ANALYSIS_RESUME="${ANALYSIS_RESUME:-true}"
-EVAL_PROMPTS="${EVAL_PROMPTS:-$EVAL_BATCH_SIZE}"
 BOOTSTRAP_SAMPLES="${BOOTSTRAP_SAMPLES:-2000}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-0}"
 TRAIN_DATA_FRACTION="${TRAIN_DATA_FRACTION:-0.4}"
@@ -74,6 +70,19 @@ fi
 if (( DRAFT_UPDATE_STEPS <= 0 )); then
   echo "DRAFT_UPDATE_STEPS must be positive." >&2
   exit 2
+fi
+if (( NUM_EPOCHS <= 0 )); then
+  echo "NUM_EPOCHS must be positive." >&2
+  exit 2
+fi
+if [[ "$SMOKE_TEST" != "true" ]] && (( TOTAL_POLICY_STEPS > 0 )) && [[ -n "$ANALYSIS_BOUNDARIES" ]]; then
+  IFS=',' read -ra boundary_values <<< "$ANALYSIS_BOUNDARIES"
+  for boundary_value in "${boundary_values[@]}"; do
+    if (( boundary_value >= TOTAL_POLICY_STEPS )); then
+      echo "TOTAL_POLICY_STEPS must exceed each ANALYSIS_BOUNDARIES value: boundary $boundary_value needs a following real GRPO update." >&2
+      exit 2
+    fi
+  done
 fi
 if [[ "$DRAFT_INITIALIZATION_MODE" == "pretrained" && -z "$DRAFT_CHECKPOINT" ]]; then
   echo "DRAFT_INITIALIZATION_MODE=pretrained requires DRAFT_CHECKPOINT. Set DRAFT_INITIALIZATION_MODE=random explicitly for one-time config-compatible random initialization." >&2
@@ -99,7 +108,6 @@ validation=(
   --draft-checkpoint "$DRAFT_CHECKPOINT" --draft-config "$DRAFT_CONFIG"
   --draft-initialization-mode "$DRAFT_INITIALIZATION_MODE"
   --vocab-mapping "$VOCAB_MAPPING" --dataset-path "$DATASET_PATH"
-  --eval-dataset-path "$EVAL_DATASET_PATH"
 )
 
 if [[ "$DRY_RUN" == "true" ]]; then
@@ -110,12 +118,10 @@ fi
 
 if [[ "$SMOKE_TEST" == "true" ]]; then
   "$PYTHON_BIN" "$SCRIPT_DIR/policy_lag_analysis.py" --mode smoke --output-dir "$OUTPUT_DIR/analysis/plumbing_smoke"
-  TOTAL_POLICY_STEPS=1
+  TOTAL_POLICY_STEPS=2
   ANALYSIS_BOUNDARIES=1
   MAX_TRAIN_SAMPLES=2
-  EVAL_PROMPTS=2
   TRAIN_BATCH_SIZE=1
-  EVAL_BATCH_SIZE=1
   GRADIENT_ACCUMULATION=1
   RESPONSES_PER_PROMPT=2
   MAX_LENGTH="${SMOKE_MAX_LENGTH:-128}"
@@ -145,15 +151,13 @@ cmd=(
   --model_type qwen2
   --train_option "$TRAIN_OPTION"
   --dataset_path "$DATASET_PATH"
-  --eval_dataset_path "$EVAL_DATASET_PATH"
   --train_split "$TRAIN_SPLIT"
-  --eval_split "$EVAL_SPLIT"
   --train_data_fraction "$TRAIN_DATA_FRACTION"
   --max_train_samples "$MAX_TRAIN_SAMPLES"
   --train_subset_seed "$TRACE_SEED"
   --version_name policy_lag
   --batch_size "$TRAIN_BATCH_SIZE"
-  --num_epochs 1000000
+  --num_epochs "$NUM_EPOCHS"
   --sample_num 100
   --accumulation_steps "$GRADIENT_ACCUMULATION"
   --draft_accumulation_steps "$DRAFT_GRADIENT_ACCUMULATION"
@@ -188,8 +192,6 @@ cmd=(
   --policy_lag_output_dir "$OUTPUT_DIR/analysis"
   --analysis_boundaries "$ANALYSIS_BOUNDARIES"
   --analysis_interval "$ANALYSIS_INTERVAL"
-  --analysis_eval_prompts "$EVAL_PROMPTS"
-  --analysis_seeds "$SAMPLING_SEEDS"
   --analysis_training_token_budget "$TRAINING_TOKEN_BUDGET"
   --analysis_draft_update_steps "$DRAFT_UPDATE_STEPS"
   --analysis_bootstrap_samples "$BOOTSTRAP_SAMPLES"

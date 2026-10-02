@@ -174,6 +174,11 @@ class BranchSummary:
     teacher_shift_tv: float
     ci_low: float | None = None
     ci_high: float | None = None
+    delta_vs_base: float | None = None
+    evaluation_epoch: int | None = None
+    evaluation_batch: int | None = None
+    used_for_grpo: bool | None = None
+    evaluation_prompt_batch_id: str | None = None
 
 
 class BoundaryJournal:
@@ -205,19 +210,26 @@ class BoundaryJournal:
 def write_results(output_dir: Path, per_response: Sequence[Mapping], summaries: Sequence[BranchSummary]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     response_path = output_dir / "per_response.jsonl"
-    response_path.write_text("", encoding="utf-8")
-    for row in per_response:
-        append_jsonl(response_path, row)
+    response_tmp = response_path.with_suffix(response_path.suffix + ".tmp")
+    with response_tmp.open("w", encoding="utf-8") as stream:
+        for row in per_response:
+            stream.write(json.dumps(row, sort_keys=True) + "\n")
+    os.replace(response_tmp, response_path)
     rows = [asdict(item) for item in summaries]
     summary_jsonl = output_dir / "summary.jsonl"
-    summary_jsonl.write_text("", encoding="utf-8")
-    for row in rows:
-        append_jsonl(summary_jsonl, row)
+    summary_tmp = summary_jsonl.with_suffix(summary_jsonl.suffix + ".tmp")
+    with summary_tmp.open("w", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(row, sort_keys=True) + "\n")
+    os.replace(summary_tmp, summary_jsonl)
     if rows:
-        with (output_dir / "summary.csv").open("w", newline="", encoding="utf-8") as stream:
+        summary_csv = output_dir / "summary.csv"
+        csv_tmp = summary_csv.with_suffix(summary_csv.suffix + ".tmp")
+        with csv_tmp.open("w", newline="", encoding="utf-8") as stream:
             writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
             writer.writeheader()
             writer.writerows(rows)
+        os.replace(csv_tmp, summary_csv)
     plot_results(rows, output_dir / "aal_policy_lag.png")
 
 
@@ -232,6 +244,7 @@ def plot_results(rows: Sequence[Mapping], path: Path) -> None:
     for row in rows:
         grouped.setdefault((int(row["policy_step"]), row["branch"]), []).append(float(row["aal"]))
     steps = sorted({key[0] for key in grouped})
+    base = [np.mean(grouped[(step, "base")]) for step in steps] if all((step, "base") in grouped for step in steps) else None
     stale = [np.mean(grouped[(step, "stale")]) for step in steps]
     fresh = [np.mean(grouped[(step, "fresh")]) for step in steps]
     delta = [f - s for s, f in zip(stale, fresh)]
@@ -241,12 +254,14 @@ def plot_results(rows: Sequence[Mapping], path: Path) -> None:
     figure, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
     axes[0].plot(steps, stale, marker="o", label="stale supervision")
     axes[0].plot(steps, fresh, marker="o", label="fresh supervision")
+    if base is not None:
+        axes[0].plot(steps, base, marker="o", label="draft before branch update")
     axes[0].set_ylabel("AAL (root/bonus included)")
     axes[0].legend()
     axes[1].axhline(0.0, color="black", linewidth=1)
     axes[1].errorbar(steps, delta, yerr=[low, high], marker="o", capsize=3)
     axes[1].set_ylabel("delta AAL (fresh - stale)")
-    axes[1].set_xlabel("policy update boundary t")
+    axes[1].set_xlabel("target update boundary (next real GRPO rollout)")
     figure.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, dpi=180)
@@ -265,8 +280,6 @@ def validate_paths(args) -> None:
         required_files["target adapter/checkpoint"] = Path(args.target_adapter)
     if args.vocab_mapping:
         required_files["vocabulary mapping"] = Path(args.vocab_mapping)
-    if args.eval_dataset_path:
-        required_files["held-out evaluation dataset"] = Path(args.eval_dataset_path)
     failures = [f"{name}: {path}" for name, path in required_files.items() if not path.exists()]
     if failures:
         raise FileNotFoundError("missing required paths:\n  " + "\n  ".join(failures))
