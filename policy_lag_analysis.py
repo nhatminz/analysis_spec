@@ -11,11 +11,13 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import json
 import os
 import random
 import subprocess
 import sys
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -32,6 +34,61 @@ def atomic_json(path: Path, payload) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def atomic_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def load_completed_results(output_dir: Path) -> tuple[set[int], list[dict], list[BranchSummary]]:
+    """Resume only boundaries with a completion marker, never partial exports."""
+    completed = set()
+    for marker in output_dir.glob("boundaries/step_*/complete.json"):
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        step = int(payload["policy_step"])
+        if marker.parent.name != f"step_{step}":
+            raise ValueError(f"completion marker has mismatched policy_step: {marker}")
+        completed.add(step)
+
+    def read_jsonl(path: Path) -> list[dict]:
+        if not path.is_file():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    if completed and not all(
+        (output_dir / name).is_file() for name in ("per_response.jsonl", "summary.jsonl")
+    ):
+        raise RuntimeError(f"completed policy-lag boundaries lack result files in {output_dir}")
+    responses = [
+        row for row in read_jsonl(output_dir / "per_response.jsonl")
+        if int(row["policy_step"]) in completed
+    ]
+    summaries = [
+        BranchSummary(**row) for row in read_jsonl(output_dir / "summary.jsonl")
+        if int(row["policy_step"]) in completed
+    ]
+    protocol_path = output_dir / "protocol.json"
+    if protocol_path.is_file():
+        protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
+        if protocol.get("format") == "fastgrpo_policy_lag_protocol_v3":
+            required = {"base", "stale", "fresh"}
+            for step in completed:
+                response_branches = {row["branch"] for row in responses if int(row["policy_step"]) == step}
+                step_summaries = [row for row in summaries if row.policy_step == step]
+                summary_branches = {row.branch for row in step_summaries}
+                if response_branches != required or summary_branches != required:
+                    raise RuntimeError(
+                        f"completed policy-lag boundary {step} is missing paired "
+                        f"base/stale/fresh records in {output_dir}"
+                    )
+                if len(step_summaries) != len(required):
+                    raise RuntimeError(
+                        f"completed policy-lag boundary {step} has duplicate branch summaries in {output_dir}"
+                    )
+    return completed, responses, summaries
 
 
 def append_jsonl(path: Path, payload) -> None:
@@ -93,6 +150,8 @@ def weighted_aal(records: Sequence[Mapping]) -> tuple[float, int, int, int]:
     generated = sum(int(row.get("generated_tokens", 0)) for row in records)
     if rounds <= 0:
         raise ValueError("AAL requires at least one sequence verification round")
+    if accepted < rounds:
+        raise ValueError("accepted length cannot be smaller than verification rounds")
     return accepted / rounds, accepted, rounds, generated
 
 
@@ -100,15 +159,35 @@ def bootstrap_delta_by_prompt(
     stale: Sequence[Mapping], fresh: Sequence[Mapping], *, seed: int, samples: int = 2000
 ) -> dict:
     """Prompt-cluster bootstrap; responses/seeds within a prompt stay grouped."""
+    if samples <= 0:
+        raise ValueError("bootstrap sample count must be positive")
     by_branch = {}
     for name, rows in (("stale", stale), ("fresh", fresh)):
         grouped = {}
         for row in rows:
             grouped.setdefault(str(row["prompt_id"]), []).append(row)
         by_branch[name] = grouped
-    prompt_ids = sorted(set(by_branch["stale"]) & set(by_branch["fresh"]))
+    stale_ids = set(by_branch["stale"])
+    fresh_ids = set(by_branch["fresh"])
+    if stale_ids != fresh_ids:
+        raise ValueError(
+            "stale/fresh rollout prompt sets differ: "
+            f"missing from fresh={sorted(stale_ids - fresh_ids)}, "
+            f"missing from stale={sorted(fresh_ids - stale_ids)}"
+        )
+    prompt_ids = sorted(stale_ids)
     if not prompt_ids:
         raise ValueError("stale/fresh evaluation has no common prompt_id")
+    for prompt_id in prompt_ids:
+        stale_rows = by_branch["stale"][prompt_id]
+        fresh_rows = by_branch["fresh"][prompt_id]
+        if len(stale_rows) != len(fresh_rows):
+            raise ValueError(f"stale/fresh response counts differ for prompt_id={prompt_id}")
+        if all("response_index" in row for row in stale_rows + fresh_rows):
+            stale_indices = sorted(int(row["response_index"]) for row in stale_rows)
+            fresh_indices = sorted(int(row["response_index"]) for row in fresh_rows)
+            if stale_indices != fresh_indices:
+                raise ValueError(f"stale/fresh response indices differ for prompt_id={prompt_id}")
     rng = np.random.default_rng(seed)
     deltas = []
     for _ in range(samples):
@@ -232,6 +311,13 @@ def write_results(
         atomic_text(output_dir / "summary.csv", stream.getvalue())
     plot_status = plot_results(rows, output_dir / "aal_policy_lag.png")
     atomic_json(output_dir / "plot_status.json", plot_status)
+    if plot_status["status"] == "skipped":
+        warnings.warn(
+            "Optional policy-lag plot was skipped; JSONL/CSV results were exported. "
+            f"Reason: {plot_status['reason']}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return plot_status
 
 
@@ -415,7 +501,7 @@ def smoke_test(output_dir: Path) -> None:
 
 def build_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["validate", "smoke", "dependencies"], required=True)
+    parser.add_argument("--mode", choices=["validate", "smoke", "dependencies", "plot"], required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-dir", default="")
     parser.add_argument("--target-adapter", default="")
@@ -434,6 +520,14 @@ def main():
     if args.mode == "smoke":
         smoke_test(output)
         print(f"Smoke test passed: {output}")
+        return
+    if args.mode == "plot":
+        completed, _, summaries = load_completed_results(output)
+        if not completed or not summaries:
+            raise RuntimeError(f"no completed policy-lag results to plot in {output}")
+        status = plot_results([asdict(item) for item in summaries], output / "aal_policy_lag.png")
+        atomic_json(output / "plot_status.json", status)
+        print(json.dumps(status, indent=2, sort_keys=True))
         return
     report = dependency_report(Path(__file__).resolve().parent)
     atomic_json(output / "dependencies.json", report)

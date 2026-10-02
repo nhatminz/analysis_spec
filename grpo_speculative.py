@@ -371,7 +371,7 @@ if analysis_enabled:
         if json.loads(protocol_path.read_text(encoding='utf-8')) != protocol:
             raise RuntimeError(f'incompatible policy-lag protocol in {protocol_path}; use a new OUTPUT_DIR')
     elif any((analysis_root / name).exists() for name in ('summary.jsonl', 'per_response.jsonl', 'boundaries')):
-        raise RuntimeError(f'existing policy-lag results have no v2 protocol in {analysis_root}; use a new OUTPUT_DIR')
+        raise RuntimeError(f'existing policy-lag results have no v3 protocol in {analysis_root}; use a new OUTPUT_DIR')
     else:
         atomic_json(protocol_path, protocol)
     if not _as_bool(args.analysis_resume) and any(

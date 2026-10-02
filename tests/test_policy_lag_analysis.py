@@ -3,10 +3,19 @@ import json
 import tempfile
 import unittest
 import warnings
+import sys
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from policy_lag_analysis import BranchSummary, load_completed_results, write_results
+from policy_lag_analysis import (
+    BranchSummary,
+    bootstrap_delta_by_prompt,
+    load_completed_results,
+    main,
+    weighted_aal,
+    write_results,
+)
 
 
 def summary(policy_step: int) -> BranchSummary:
@@ -28,6 +37,29 @@ def summary(policy_step: int) -> BranchSummary:
 
 
 class PolicyLagExportTests(unittest.TestCase):
+    def test_aal_uses_total_accepted_over_total_verification_rounds(self):
+        records = [
+            {"prompt_id": "p0", "accepted_length_sum": 5, "verification_rounds": 2},
+            {"prompt_id": "p1", "accepted_length_sum": 3, "verification_rounds": 2},
+        ]
+        self.assertEqual(weighted_aal(records), (2.0, 8, 4, 0))
+
+    def test_bootstrap_rejects_unpaired_rollouts(self):
+        stale = [
+            {"prompt_id": "p0", "response_index": 0, "accepted_length_sum": 2, "verification_rounds": 1},
+            {"prompt_id": "p1", "response_index": 0, "accepted_length_sum": 2, "verification_rounds": 1},
+        ]
+        fresh = [
+            {"prompt_id": "p0", "response_index": 0, "accepted_length_sum": 3, "verification_rounds": 1},
+            {"prompt_id": "p2", "response_index": 0, "accepted_length_sum": 3, "verification_rounds": 1},
+        ]
+        with self.assertRaisesRegex(ValueError, "prompt sets differ"):
+            bootstrap_delta_by_prompt(stale, fresh, seed=1, samples=10)
+        fresh[1]["prompt_id"] = "p1"
+        fresh[1]["response_index"] = 1
+        with self.assertRaisesRegex(ValueError, "response indices differ"):
+            bootstrap_delta_by_prompt(stale, fresh, seed=1, samples=10)
+
     def test_missing_matplotlib_does_not_abort_data_export(self):
         real_import = builtins.__import__
 
@@ -82,6 +114,71 @@ class PolicyLagExportTests(unittest.TestCase):
             self.assertEqual(completed, {1})
             self.assertEqual([row["policy_step"] for row in responses], [1])
             self.assertEqual([row.policy_step for row in summaries], [1])
+
+    def test_v3_resume_rejects_incomplete_completed_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "protocol.json").write_text(
+                json.dumps({"format": "fastgrpo_policy_lag_protocol_v3"}), encoding="utf-8"
+            )
+            marker = output / "boundaries" / "step_1" / "complete.json"
+            marker.parent.mkdir(parents=True)
+            marker.write_text(json.dumps({"policy_step": 1}), encoding="utf-8")
+            (output / "per_response.jsonl").write_text(
+                json.dumps({"policy_step": 1, "branch": "stale"}) + "\n", encoding="utf-8"
+            )
+            (output / "summary.jsonl").write_text(
+                json.dumps(summary(1).__dict__) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RuntimeError, "missing paired"):
+                load_completed_results(output)
+
+    def test_v3_resume_preserves_paired_completed_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "protocol.json").write_text(
+                json.dumps({"format": "fastgrpo_policy_lag_protocol_v3"}), encoding="utf-8"
+            )
+            marker = output / "boundaries" / "step_1" / "complete.json"
+            marker.parent.mkdir(parents=True)
+            marker.write_text(json.dumps({"policy_step": 1}), encoding="utf-8")
+            branches = ("base", "stale", "fresh")
+            (output / "per_response.jsonl").write_text(
+                "".join(json.dumps({"policy_step": 1, "branch": branch, "prompt_id": 0}) + "\n"
+                        for branch in branches),
+                encoding="utf-8",
+            )
+            (output / "summary.jsonl").write_text(
+                "".join(json.dumps(replace(summary(1), branch=branch).__dict__) + "\n"
+                        for branch in branches),
+                encoding="utf-8",
+            )
+            completed, responses, summaries = load_completed_results(output)
+            self.assertEqual(completed, {1})
+            self.assertEqual({row["branch"] for row in responses}, set(branches))
+            self.assertEqual({row.branch for row in summaries}, set(branches))
+
+    def test_plot_mode_uses_only_completed_results_without_dependency_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            marker = output / "boundaries" / "step_1" / "complete.json"
+            marker.parent.mkdir(parents=True)
+            marker.write_text(json.dumps({"policy_step": 1}), encoding="utf-8")
+            (output / "summary.jsonl").write_text(
+                json.dumps(summary(1).__dict__) + "\n" +
+                json.dumps(summary(5).__dict__) + "\n",
+                encoding="utf-8",
+            )
+            (output / "per_response.jsonl").write_text(
+                json.dumps({"policy_step": 1, "branch": "stale", "prompt_id": "p0"}) + "\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(sys, "argv", ["policy_lag_analysis.py", "--mode", "plot", "--output-dir", str(output)]), \
+                 mock.patch("policy_lag_analysis.dependency_report", side_effect=AssertionError("should not validate dependencies")), \
+                 mock.patch("policy_lag_analysis.plot_results", return_value={"status": "generated", "path": "plot.png"}) as plot:
+                main()
+            self.assertEqual([row["policy_step"] for row in plot.call_args.args[0]], [1])
+            self.assertEqual(json.loads((output / "plot_status.json").read_text())["status"], "generated")
 
 
 if __name__ == "__main__":
