@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Create deterministic, disjoint DAPO train/eval JSONL files.
 
-The source DAPO English parquet exposes only a ``train`` split.  Policy-lag
-evaluation must be held out, so this utility selects the requested GRPO pool
-and then selects evaluation prompts from the remaining shuffled indices.
+The source DAPO English parquet exposes only a ``train`` split. The eval file
+is retained for split integrity/provenance; policy-lag v4 AAL is measured on
+the next *real GRPO training rollout*, never on this held-out file.
 """
 
 from __future__ import annotations

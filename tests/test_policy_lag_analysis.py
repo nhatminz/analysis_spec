@@ -11,6 +11,7 @@ from unittest import mock
 from policy_lag_analysis import (
     BranchSummary,
     bootstrap_delta_by_prompt,
+    dataset_disjointness_report,
     load_completed_results,
     main,
     weighted_aal,
@@ -37,6 +38,20 @@ def summary(policy_step: int) -> BranchSummary:
 
 
 class PolicyLagExportTests(unittest.TestCase):
+    def test_split_disjointness_is_recorded_and_source_overlap_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            train = Path(directory) / "train.jsonl"
+            evaluation = Path(directory) / "eval.jsonl"
+            train.write_text(json.dumps({"source_index": 1, "question": "one"}) + "\n")
+            evaluation.write_text(json.dumps({"source_index": 2, "question": "two"}) + "\n")
+            report = dataset_disjointness_report(train, evaluation)
+            self.assertTrue(report["source_disjoint"])
+            self.assertEqual(report["source_index_overlap"], 0)
+            self.assertIn("next real GRPO rollout", report["evaluation_usage"])
+            evaluation.write_text(json.dumps({"source_index": 1, "question": "two"}) + "\n")
+            with self.assertRaisesRegex(ValueError, "source indices overlap"):
+                dataset_disjointness_report(train, evaluation)
+
     def test_aal_uses_total_accepted_over_total_verification_rounds(self):
         records = [
             {"prompt_id": "p0", "accepted_length_sum": 5, "verification_rounds": 2},

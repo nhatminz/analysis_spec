@@ -27,11 +27,43 @@ import threading
 import math
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from helper.rollout_merge import merge_rollout_outputs
 
 
 total_target_time=0
 total_draft_time=0
 total_check_time=0
+
+
+def speculative_generate_in_prompt_batches(*, prompt_batch_size, input_ids, attention_mask, **kwargs):
+    """Generate one real prompt batch in bounded chunks without changing its order.
+
+    All chunks see the same frozen target/draft weights; the caller performs the
+    GRPO update only after the combined rollout has been returned. This lets a
+    64-prompt next-rollout evaluation use eight-prompt decoder invocations.
+    """
+    prompt_count = int(input_ids.shape[0])
+    if prompt_batch_size <= 0 or prompt_count <= prompt_batch_size:
+        return speculative_generate(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+    parts = []
+    for start in range(0, prompt_count, prompt_batch_size):
+        stop = min(start + prompt_batch_size, prompt_count)
+        chunk_mask = attention_mask[start:stop]
+        active_columns = torch.nonzero(chunk_mask.any(dim=0), as_tuple=False).flatten()
+        if active_columns.numel() == 0:
+            raise ValueError('decoder prompt chunk contains no non-padding tokens')
+        first_token_column = int(active_columns[0].item())
+        part = speculative_generate(
+            input_ids=input_ids[start:stop, first_token_column:],
+            attention_mask=chunk_mask[:, first_token_column:],
+            **kwargs,
+        )
+        parts.append(part)
+    combined = merge_rollout_outputs(parts)
+    expected_responses = prompt_count * int(kwargs.get('repeated_generate_nums') or 1)
+    if len(combined['generated_token_ids']) != expected_responses:
+        raise RuntimeError('chunked speculative rollout changed response count/order')
+    return combined
 
 
 def _cache_num_layers(cache):
@@ -572,6 +604,9 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     
     generated_sequences=target_next_token
     
+    # Decoder contract: token row p is x[p+1], while auxiliary feature and
+    # captured final-hidden row p still describe x[p]. The online training
+    # adapter shifts *only* final hidden after all verification rows are joined.
     draft_input_ids=torch.concat([input_ids[:,1:],target_next_token],dim=-1)
     draft_attention_mask=attention_mask.to(model.dtype)
         
@@ -922,6 +957,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         )
         
         if return_all_draft_input:
+            # Preserve the unshifted target hidden through verification joins;
+            # shifting each segment here would invalidate its boundary row.
             all_draft_input_states=torch.concat([all_draft_input_states, feature_states], dim=1)
             all_target_hidden_states=torch.concat([all_target_hidden_states, target_hidden_states], dim=1)
             all_draft_input_ids=torch.concat([all_draft_input_ids, next_token], dim=-1)
@@ -1176,6 +1213,11 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         all_draft_input_states=all_draft_input_states_without_padding
         all_target_hidden_states=all_target_hidden_states_without_padding
         all_draft_input_ids=all_draft_input_ids_without_padding
+        for row_features, row_teacher, row_tokens in zip(
+            all_draft_input_states, all_target_hidden_states, all_draft_input_ids
+        ):
+            if not (row_features.shape[0] == row_teacher.shape[0] == row_tokens.shape[0]):
+                raise RuntimeError('decoder returned unequal EAGLE-3 token/feature/teacher rows')
             
     new_padding_positions=[[] for _ in range(bsz)]
     for idx_batch in range(bsz):

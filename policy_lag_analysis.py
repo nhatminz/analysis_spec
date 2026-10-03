@@ -73,7 +73,9 @@ def load_completed_results(output_dir: Path) -> tuple[set[int], list[dict], list
     protocol_path = output_dir / "protocol.json"
     if protocol_path.is_file():
         protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
-        if protocol.get("format") == "fastgrpo_policy_lag_protocol_v3":
+        if protocol.get("format") in {
+            "fastgrpo_policy_lag_protocol_v3", "fastgrpo_policy_lag_protocol_v4"
+        }:
             required = {"base", "stale", "fresh"}
             for step in completed:
                 response_branches = {row["branch"] for row in responses if int(row["policy_step"]) == step}
@@ -258,6 +260,8 @@ class BranchSummary:
     evaluation_batch: int | None = None
     used_for_grpo: bool | None = None
     evaluation_prompt_batch_id: str | None = None
+    requested_training_token_budget: int | None = None
+    effective_draft_lr: float | None = None
 
 
 class BoundaryJournal:
@@ -382,9 +386,50 @@ def validate_paths(args) -> None:
         required_files["target adapter/checkpoint"] = Path(args.target_adapter)
     if args.vocab_mapping:
         required_files["vocabulary mapping"] = Path(args.vocab_mapping)
+    if args.eval_dataset_path:
+        required_files["evaluation dataset"] = Path(args.eval_dataset_path)
     failures = [f"{name}: {path}" for name, path in required_files.items() if not path.exists()]
     if failures:
         raise FileNotFoundError("missing required paths:\n  " + "\n  ".join(failures))
+
+
+def dataset_disjointness_report(train_path: Path, eval_path: Path) -> dict:
+    """Check the prepared split by source ID and prompt content, not filenames."""
+    def read_keys(path):
+        source_ids, prompt_hashes, count = set(), set(), 0
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                count += 1
+                if "source_index" in row:
+                    source_ids.add(int(row["source_index"]))
+                prompt = row.get("question", row.get("prompt"))
+                if prompt is None:
+                    raise ValueError(f"dataset row {count} has no prompt in {path}")
+                prompt_hashes.add(hashlib.sha256(str(prompt).encode("utf-8")).hexdigest())
+        return source_ids, prompt_hashes, count
+
+    train_ids, train_prompts, train_count = read_keys(train_path)
+    eval_ids, eval_prompts, eval_count = read_keys(eval_path)
+    source_overlap = len(train_ids & eval_ids)
+    prompt_overlap = len(train_prompts & eval_prompts)
+    if source_overlap:
+        raise ValueError(f"train/eval source indices overlap: {source_overlap}")
+    return {
+        "train_path": str(train_path.resolve()),
+        "eval_path": str(eval_path.resolve()),
+        "train_rows": train_count,
+        "eval_rows": eval_count,
+        "source_index_overlap": source_overlap,
+        "prompt_overlap": prompt_overlap,
+        "source_disjoint": source_overlap == 0,
+        "prompt_content_disjoint": prompt_overlap == 0,
+        "train_sha256": hashlib.sha256(train_path.read_bytes()).hexdigest(),
+        "eval_sha256": hashlib.sha256(eval_path.read_bytes()).hexdigest(),
+        "evaluation_usage": "split_integrity_only; AAL uses next real GRPO rollout",
+    }
 
 
 def dependency_report(repo: Path) -> dict:
@@ -395,10 +440,25 @@ def dependency_report(repo: Path) -> dict:
     }
     try:
         report["fastgrpo_commit"] = subprocess.check_output(
-            ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+            ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True,
+            stderr=subprocess.DEVNULL,
         ).strip()
     except Exception as exc:
         report["fastgrpo_commit_error"] = str(exc)
+    source_files = (
+        "grpo_speculative.py", "helper/specualtive_generate.py",
+        "helper/eagle3_specforge.py", "helper/eagle3_supervision.py",
+        "helper/response_batches.py", "helper/rollout_merge.py",
+        "policy_lag_analysis.py",
+        "run_policy_lag_analysis.sh", "run_policy_lag_analysis_b200.sh",
+        "scripts/prepare_dapo_policy_lag.py",
+        "third_party/SpecForge/specforge/modeling/target/target_head.py",
+        "third_party/SpecForge/specforge/algorithms/eagle3/model.py",
+    )
+    report["source_sha256"] = {
+        name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
+        for name in source_files
+    }
     for module in ("torch", "transformers", "peft", "datasets", "specforge"):
         try:
             imported = __import__(module)
@@ -533,6 +593,12 @@ def main():
     atomic_json(output / "dependencies.json", report)
     if args.mode == "validate":
         validate_paths(args)
+        if args.eval_dataset_path:
+            report["train_eval_disjointness"] = dataset_disjointness_report(
+                Path(args.dataset_path), Path(args.eval_dataset_path)
+            )
+        report["analysis_protocol"] = "fastgrpo_policy_lag_protocol_v4"
+        atomic_json(output / "dependencies.json", report)
         if sys.version_info < (3, 11):
             raise RuntimeError(
                 f'pinned SpecForge requires Python >=3.11; found {sys.version.split()[0]}'

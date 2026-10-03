@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+import hashlib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -16,8 +17,10 @@ from helper.modeling_draft import Model
 from helper.rewards import accuracy_reward_func , format_reward_func
 from helper.get_QAs import get_test_QAs , get_train_QAs, get_QAs_from_path, select_train_subset
 from helper.drift_metrics import acceptance_aligned_union_metrics
-from helper.specualtive_generate import speculative_generate
+from helper.specualtive_generate import speculative_generate_in_prompt_batches
 from helper.eagle3_specforge import Eagle3FastGRPOAdapter
+from helper.eagle3_supervision import aligned_eagle3_row, count_eagle3_supervision
+from helper.response_batches import reorder_response_fields, microbatch_index_groups
 from policy_lag_analysis import (
     BranchSummary,
     atomic_json,
@@ -292,6 +295,10 @@ parser.add_argument('--draft_lr_multiplier', type=float, default=1.0,
 parser.add_argument('--policy_lag_output_dir', type=str, default='')
 parser.add_argument('--analysis_boundaries', type=str, default='')
 parser.add_argument('--analysis_interval', type=int, default=0)
+parser.add_argument('--analysis_eval_prompts', type=int, default=8,
+                    help='Prompts in the next real GRPO rollout; must equal --batch_size.')
+parser.add_argument('--analysis_eval_batch_size', type=int, default=8,
+                    help='Maximum prompts per speculative decoder call, not a held-out split.')
 parser.add_argument('--analysis_training_token_budget', type=int, default=0)
 parser.add_argument('--analysis_draft_update_steps', type=int, default=1)
 parser.add_argument('--analysis_bootstrap_samples', type=int, default=2000)
@@ -356,22 +363,66 @@ analysis_boundaries = {
 }
 analysis_interval = max(0, int(args.analysis_interval))
 analysis_enabled = bool(policy_lag_output_dir) and bool(analysis_boundaries or analysis_interval)
+analysis_eval_prompts = int(args.analysis_eval_prompts)
+analysis_eval_batch_size = int(args.analysis_eval_batch_size)
+if analysis_enabled:
+    if analysis_eval_prompts <= 0 or analysis_eval_batch_size <= 0:
+        raise ValueError('analysis evaluation prompt count and batch size must be positive')
+    if int(args.analysis_training_token_budget) <= 0:
+        raise ValueError('analysis draft supervision token budget must be positive')
+    if batch_size != analysis_eval_prompts:
+        raise ValueError(
+            'next-real-rollout analysis requires --batch_size == --analysis_eval_prompts; '
+            'the evaluated prompt batch must also be used for GRPO'
+        )
 if analysis_enabled:
     analysis_root = Path(policy_lag_output_dir)
+    source_sha256 = {
+        name: hashlib.sha256((REPO_ROOT / name).read_bytes()).hexdigest()
+        for name in (
+            'grpo_speculative.py', 'helper/specualtive_generate.py',
+            'helper/eagle3_supervision.py', 'helper/response_batches.py',
+            'helper/rollout_merge.py', 'helper/eagle3_specforge.py',
+            'policy_lag_analysis.py', 'scripts/prepare_dapo_policy_lag.py',
+            'third_party/SpecForge/specforge/modeling/target/target_head.py',
+            'third_party/SpecForge/specforge/algorithms/eagle3/model.py',
+        )
+    }
     protocol_path = analysis_root / 'protocol.json'
     protocol = {
-        'format': 'fastgrpo_policy_lag_protocol_v3',
+        'format': 'fastgrpo_policy_lag_protocol_v4',
         'evaluation_scope': 'next_real_grpo_rollout',
         'evaluation_target': 'theta_after_update',
         'fresh_rollout_draft': 'phi_base',
         'main_trajectory': 'stale_branch_rollout_used_for_grpo',
         'pairing': 'same_next_batch_and_captured_training_rng',
+        'teacher_alignment': 'specforge_target_head_preprocess_shift_final_hidden_v1',
+        'response_advantage_alignment': 'stable_length_permutation_v1',
+        'evaluation_prompt_count': analysis_eval_prompts,
+        'evaluation_decoder_batch_size': analysis_eval_batch_size,
+        'responses_per_prompt': repeated_generate_nums,
+        'requested_training_token_budget': int(args.analysis_training_token_budget),
+        'draft_optimizer_steps_per_branch': int(args.analysis_draft_update_steps),
+        'requested_draft_lr': float(draft_lr),
+        'target_max_training_token': int(max_training_token),
+        'target_model_path': os.path.realpath(model_dir),
+        'draft_checkpoint_path': os.path.realpath(adapter_path),
+        'train_dataset_path': os.path.realpath(args.dataset_path),
+        'train_dataset_sha256': (
+            hashlib.sha256(Path(args.dataset_path).read_bytes()).hexdigest()
+            if Path(args.dataset_path).is_file() else None
+        ),
+        'eval_dataset_sha256': (
+            hashlib.sha256(Path(args.eval_dataset_path).read_bytes()).hexdigest()
+            if args.eval_dataset_path and Path(args.eval_dataset_path).is_file() else None
+        ),
+        'source_sha256': source_sha256,
     }
     if protocol_path.is_file():
         if json.loads(protocol_path.read_text(encoding='utf-8')) != protocol:
             raise RuntimeError(f'incompatible policy-lag protocol in {protocol_path}; use a new OUTPUT_DIR')
     elif any((analysis_root / name).exists() for name in ('summary.jsonl', 'per_response.jsonl', 'boundaries')):
-        raise RuntimeError(f'existing policy-lag results have no v3 protocol in {analysis_root}; use a new OUTPUT_DIR')
+        raise RuntimeError(f'existing policy-lag results have no v4 protocol in {analysis_root}; use a new OUTPUT_DIR')
     else:
         atomic_json(protocol_path, protocol)
     if not _as_bool(args.analysis_resume) and any(
@@ -1038,16 +1089,11 @@ def training_eagle3_specforge(model, outputs, prompt_mask, token_budget=None):
         target_hidden = target_hidden.detach().clone()
         input_ids_row = input_ids_row.detach().clone()
         prompt_len = int(prompt_mask[index // repeated_generate_nums].sum().item())
+        input_ids_row, features, target_hidden, row_loss_mask = aligned_eagle3_row(
+            features, target_hidden, input_ids_row, prompt_len, remaining_budget
+        )
         seq_len = int(input_ids_row.shape[-1])
-        loss_mask = torch.zeros((1, seq_len, 1), device=model.device, dtype=torch.float32)
-        loss_mask[:, min(prompt_len, seq_len):, :] = 1.0
-        if seq_len:
-            loss_mask[:, -1, :] = 0.0
-        if remaining_budget is not None:
-            valid_positions = torch.nonzero(loss_mask.reshape(-1) > 0, as_tuple=False).flatten()
-            if valid_positions.numel() > remaining_budget:
-                loss_mask.zero_()
-                loss_mask.reshape(-1)[valid_positions[:remaining_budget]] = 1.0
+        loss_mask = row_loss_mask.unsqueeze(0)
         cur_valid = int(loss_mask.sum().item())
         if cur_valid == 0:
             continue
@@ -1098,6 +1144,7 @@ batch_data={
     'messages':[],
     'rewards':[],
     'std_rewards':[],
+    'response_ids':[],
     'generate_time_cost':0,
     'last_generate_time_cost':[],
     'train_time_cost':0,
@@ -1186,8 +1233,19 @@ batch_data['draft_sparse_kl_sum'] = 0.0
 batch_data['draft_sparse_count'] = 0
 batch_data['trace_rollout_count'] = 0
 for param_group in optimizer_draft.param_groups:
-    param_group['lr'] = float(param_group['lr']) * draft_lr_multiplier
+    # AdamW.load_state_dict restores the checkpoint LR. The requested run LR
+    # must win, otherwise old checkpoints silently change both branch updates.
+    param_group['lr'] = float(draft_lr) * draft_lr_multiplier
 effective_draft_lrs = [float(group['lr']) for group in optimizer_draft.param_groups]
+if analysis_enabled and (len(set(effective_draft_lrs)) != 1 or
+                         effective_draft_lrs[0] != float(draft_lr)):
+    raise RuntimeError('policy-lag branch LR must equal the requested --draft_lr')
+
+analysis_dependencies = {}
+if analysis_enabled:
+    dependency_path = analysis_root / 'dependencies.json'
+    if dependency_path.is_file():
+        analysis_dependencies = json.loads(dependency_path.read_text(encoding='utf-8'))
 
 run_config_log = {
     "phase": "run_config",
@@ -1198,6 +1256,13 @@ run_config_log = {
     "source_target_optimizer_steps": int(trace_start_target_optimizer_steps),
     "source_draft_step": int(trace_start_draft_step),
     "max_grpo_steps": int(max_grpo_steps),
+    "num_epochs": int(num_epochs),
+    "train_batch_size": int(batch_size),
+    "responses_per_prompt": int(repeated_generate_nums),
+    "target_lr_requested": float(target_lr),
+    "draft_lr_requested": float(draft_lr),
+    "analysis_boundaries": sorted(analysis_boundaries),
+    "analysis_interval": int(analysis_interval),
     "train_option": str(args.train_option),
     "dataset_path": str(args.dataset_path),
     "eval_dataset_path": str(args.eval_dataset_path),
@@ -1212,10 +1277,20 @@ run_config_log = {
     "drift_normalization": "mean_over_valid_response_token_rows",
     "draft_lr_multiplier": float(draft_lr_multiplier),
     "effective_draft_lrs": effective_draft_lrs,
+    "analysis_protocol": "fastgrpo_policy_lag_protocol_v4" if analysis_enabled else None,
+    "analysis_eval_prompts": analysis_eval_prompts if analysis_enabled else None,
+    "analysis_eval_batch_size": analysis_eval_batch_size if analysis_enabled else None,
+    "analysis_requested_training_token_budget": int(args.analysis_training_token_budget),
+    "analysis_draft_update_steps": int(args.analysis_draft_update_steps),
+    "target_max_training_token": int(max_training_token),
+    "train_eval_disjointness": analysis_dependencies.get('train_eval_disjointness'),
+    "source_revision": analysis_dependencies.get('fastgrpo_commit'),
+    "source_sha256": source_sha256 if analysis_enabled else None,
     "fastgrpo_ablation": bool(fastgrpo_ablation),
 }
 with open(log_file, 'a', encoding='utf-8') as f:
     f.write(json.dumps(run_config_log) + '\n')
+print(json.dumps(run_config_log, sort_keys=True))
 
 class TrainDataCollator:
     def __init__(self, tokenizer, max_prompt_length):
@@ -1276,41 +1351,48 @@ def _analysis_boundary(step_value):
 
 def _teacher_prefix_hidden(eval_batch):
     base = _get_base_causal_lm(model.target_model)
-    with torch.inference_mode():
-        result = base.model(
-            input_ids=eval_batch['input_ids'].to(model.target_model.device),
-            attention_mask=eval_batch['attention_mask'].to(model.target_model.device),
-            use_cache=False,
-            return_dict=True,
-        )
-        hidden = result.last_hidden_state if hasattr(result, 'last_hidden_state') else result[0]
-        return hidden.float().cpu()
+    rows = []
+    for start in range(0, len(eval_batch['input_ids']), analysis_eval_batch_size):
+        stop = start + analysis_eval_batch_size
+        with torch.inference_mode():
+            result = base.model(
+                input_ids=eval_batch['input_ids'][start:stop].to(model.target_model.device),
+                attention_mask=eval_batch['attention_mask'][start:stop].to(model.target_model.device),
+                use_cache=False,
+                return_dict=True,
+            )
+            hidden = result.last_hidden_state if hasattr(result, 'last_hidden_state') else result[0]
+            rows.append(hidden.float().cpu())
+    return torch.cat(rows, dim=0)
 
 
 def _teacher_tv_from_hidden(old_hidden, new_hidden, valid_mask):
     base = _get_base_causal_lm(model.target_model)
     total = 0.0
     count = 0
-    for start in range(0, old_hidden.shape[1], drift_row_chunk_size):
-        mask = valid_mask[:, start:start + drift_row_chunk_size].bool()
-        if not mask.any():
-            continue
-        with torch.inference_mode():
-            old_logits = base.lm_head(
-                old_hidden[:, start:start + drift_row_chunk_size].to(
-                    device=model.target_model.device, dtype=base.lm_head.weight.dtype
+    for batch_start in range(0, old_hidden.shape[0], analysis_eval_batch_size):
+        batch_stop = batch_start + analysis_eval_batch_size
+        for start in range(0, old_hidden.shape[1], drift_row_chunk_size):
+            stop = start + drift_row_chunk_size
+            mask = valid_mask[batch_start:batch_stop, start:stop].bool()
+            if not mask.any():
+                continue
+            with torch.inference_mode():
+                old_logits = base.lm_head(
+                    old_hidden[batch_start:batch_stop, start:stop].to(
+                        device=model.target_model.device, dtype=base.lm_head.weight.dtype
+                    )
                 )
-            )
-            new_logits = base.lm_head(
-                new_hidden[:, start:start + drift_row_chunk_size].to(
-                    device=model.target_model.device, dtype=base.lm_head.weight.dtype
+                new_logits = base.lm_head(
+                    new_hidden[batch_start:batch_stop, start:stop].to(
+                        device=model.target_model.device, dtype=base.lm_head.weight.dtype
+                    )
                 )
-            )
-            value = teacher_shift_tv(old_logits, new_logits, mask, row_chunk_size=drift_row_chunk_size)
-        cur_count = int(mask.sum().item())
-        total += value * cur_count
-        count += cur_count
-        del old_logits, new_logits
+                value = teacher_shift_tv(old_logits, new_logits, mask, row_chunk_size=drift_row_chunk_size)
+            cur_count = int(mask.sum().item())
+            total += value * cur_count
+            count += cur_count
+            del old_logits, new_logits
     return total / max(count, 1)
 
 
@@ -1353,7 +1435,8 @@ def _evaluate_analysis_branch(branch_name, draft_state, eval_batch, policy_step,
     model.eval()
     _restore_analysis_rng(rng_state)
     with torch.inference_mode():
-        result = speculative_generate(
+        result = speculative_generate_in_prompt_batches(
+            prompt_batch_size=analysis_eval_batch_size,
             model=model,
             input_ids=eval_batch['input_ids'].to('cuda'),
             attention_mask=eval_batch['attention_mask'].to('cuda'),
@@ -1384,6 +1467,9 @@ def _finalize_next_rollout_analysis(pending, base_rows, stale_rows, fresh_rows, 
     policy_step = int(pending['policy_step'])
     if next_target_optimizer_step != policy_step + 1:
         raise RuntimeError('live rollout was not followed by exactly one target optimizer update')
+    expected_responses = analysis_eval_prompts * repeated_generate_nums
+    if any(len(rows) != expected_responses for rows in (base_rows, stale_rows, fresh_rows)):
+        raise RuntimeError('analysis branches did not evaluate all requested real-rollout responses')
     boot = bootstrap_delta_by_prompt(
         stale_rows, fresh_rows,
         seed=trace_seed + policy_step,
@@ -1425,6 +1511,10 @@ def _finalize_next_rollout_analysis(pending, base_rows, stale_rows, fresh_rows, 
             evaluation_batch=int(batch_index),
             used_for_grpo=branch_name == 'stale',
             evaluation_prompt_batch_id=eval_prompt_batch_id,
+            requested_training_token_budget=(
+                int(pending['requested_training_token_budget']) if trained else 0
+            ),
+            effective_draft_lr=(float(pending['effective_draft_lr']) if trained else None),
         ))
     write_results(Path(policy_lag_output_dir), analysis_per_response, analysis_summaries)
     boundary_dir = Path(policy_lag_output_dir) / 'boundaries' / f'step_{policy_step}'
@@ -1483,8 +1573,13 @@ dataloader=DataLoader(
     persistent_workers=persistent_workers and num_workers > 0,
     batch_size=batch_size,
     shuffle=True,
-    drop_last=False,
+    drop_last=analysis_enabled,
 )
+if analysis_enabled and len(dataloader) == 0:
+    raise ValueError(
+        f'analysis needs at least {analysis_eval_prompts} training prompts; '
+        f'only {len(QAs)} selected'
+    )
 
 epoch_bar = tqdm(range(start_epoch, num_epochs), desc="Epoch", dynamic_ncols=True)
 for epoch in epoch_bar:
@@ -1519,6 +1614,8 @@ for epoch in epoch_bar:
         
         input_ids=batch['input_ids'].to('cuda')
         attention_mask=batch['attention_mask'].to('cuda')
+        if analysis_enabled and input_ids.shape[0] != analysis_eval_prompts:
+            raise RuntimeError('next-real-rollout analysis received an incomplete evaluation prompt batch')
         analysis_train_input_ids = input_ids.detach().cpu()
         analysis_train_attention_mask = attention_mask.detach().cpu()
         analysis_batch = {
@@ -1574,7 +1671,9 @@ for epoch in epoch_bar:
             # the real online draft backward pass below.
             model.eval()
         with torch.inference_mode():
-            outputs=speculative_generate(model=model,input_ids=input_ids,attention_mask=attention_mask,tokenizer=tokenizer,
+            outputs=speculative_generate_in_prompt_batches(
+            prompt_batch_size=analysis_eval_batch_size if analysis_enabled else 0,
+            model=model,input_ids=input_ids,attention_mask=attention_mask,tokenizer=tokenizer,
             do_sample=True,max_length=max_length,repeated_generate_nums=repeated_generate_nums,temperature=temperature,top_p=top_p,
             verification_capacity=verification_capacity,
             max_draft_token_length=max_draft_token_length,
@@ -1637,6 +1736,7 @@ for epoch in epoch_bar:
             generate_length += outputs['max_sequence_length']
             rewards=[]
             new_messages=[]
+            new_response_ids=[]
             for idx_k in range(repeated_generate_nums):
                 idx_sequence=idx_batch*repeated_generate_nums+idx_k
                 decoded_sequence=outputs['decoded_sequences'][idx_sequence]
@@ -1654,6 +1754,7 @@ for epoch in epoch_bar:
                 
                 rewards.append(reward)
                 new_messages.append(new_message)
+                new_response_ids.append((int(epoch), int(i), int(idx_batch), int(idx_k)))
             
             
             rewards=np.array(rewards) 
@@ -1670,6 +1771,7 @@ for epoch in epoch_bar:
             batch_data['messages']+=new_messages
             batch_data['rewards']+=rewards.tolist()
             batch_data['std_rewards']+=std_rewards.tolist()
+            batch_data['response_ids']+=new_response_ids
             used_items+=1
             
         generate_length /= len(answers)
@@ -1749,6 +1851,8 @@ for epoch in epoch_bar:
                 )
                 model.draft_model.load_state_dict(stale_checkpoint['draft_state_dict'], strict=True)
                 optimizer_draft.load_state_dict(stale_checkpoint['optimizer_state_dict'])
+                if [float(group['lr']) for group in optimizer_draft.param_groups] != effective_draft_lrs:
+                    raise RuntimeError('resumed stale branch restored an unexpected draft LR')
                 optimizer_draft.zero_grad(set_to_none=True)
                 if draft_update_committed:
                     draft_step -= 1
@@ -1776,15 +1880,35 @@ for epoch in epoch_bar:
         input_ids=text.input_ids
         attention_mask=text.attention_mask
         
-        sorted_pairs = sorted(
-            zip(input_ids, attention_mask, loss_mask),
-            key=lambda x: len(x[0]),
-            reverse=False   
+        response_count = len(input_ids)
+        if any(len(batch_data[field]) != response_count for field in
+               ('messages', 'rewards', 'std_rewards', 'response_ids')):
+            raise RuntimeError('GRPO per-response fields have different lengths before sorting')
+        if len(set(tuple(item) for item in batch_data['response_ids'])) != response_count:
+            raise RuntimeError('GRPO response identities are not unique')
+        permutation, sorted_fields = reorder_response_fields(
+            [len(row) for row in input_ids], {
+                'input_ids': input_ids,
+                'attention_mask': attention_mask,
+                'loss_mask': loss_mask,
+                **{field: batch_data[field] for field in
+                   ('messages', 'rewards', 'std_rewards', 'response_ids')},
+            }
         )
-
-        input_ids_sorted, attention_mask_sorted, loss_mask_sorted = zip(*sorted_pairs)
-
-        input_ids, attention_mask, loss_mask = list(input_ids_sorted), list(attention_mask_sorted), list(loss_mask_sorted)
+        input_ids = sorted_fields['input_ids']
+        attention_mask = sorted_fields['attention_mask']
+        loss_mask = sorted_fields['loss_mask']
+        for field in ('messages', 'rewards', 'std_rewards', 'response_ids'):
+            batch_data[field] = sorted_fields[field]
+        if analysis_enabled:
+            with open(log_file, 'a', encoding='utf-8') as stream:
+                stream.write(json.dumps({
+                    'phase': 'grpo_response_order',
+                    'target_optimizer_steps_before': int(target_optimizer_steps),
+                    'original_indices': permutation,
+                    'response_ids': batch_data['response_ids'],
+                    'advantages': batch_data['std_rewards'],
+                }) + '\n')
 
         step = used_items // (batch_size * accumulation_steps)  
         batch_old_logps=[]
@@ -1795,115 +1919,39 @@ for epoch in epoch_bar:
                 torch.cuda.synchronize()
             train_time_start=time.time()
             
-            cur_max_length=0
             device=model.target_model.device
-            microbatch_index=0
-            
-            cur_input_ids=[]
-            cur_attention_mask=[]
-            cur_loss_mask=[]
-            cur_rewards=[]
-            
-            for j in range(len(batch_data['messages'])):
-                
-                if ((max(cur_max_length, len(input_ids[j])) * (len(cur_input_ids)+1)<=max_training_token and
-                    (len(input_ids[j])-cur_max_length)*len(cur_input_ids)<=max_training_padding_gap) or
-                    len(cur_input_ids)==0):
-                    cur_max_length=max(cur_max_length, len(input_ids[j]))
-                    
-                    cur_input_ids.append(input_ids[j])
-                    cur_attention_mask.append(attention_mask[j])
-                    cur_loss_mask.append(loss_mask[j])
-                    cur_rewards.append(batch_data['std_rewards'][j])
-                    
-                else:
-                    
-                    cur_batch=len(cur_input_ids)
-                    for idx_seq in range(cur_batch):
-                        
-                        cur_len=len(cur_input_ids[idx_seq])
-                        padding_len=cur_max_length-cur_len
-                        
-                        if padding_len>0:
-                            
-                            cur_input_ids[idx_seq]=cur_input_ids[idx_seq]+[0]*padding_len
-                            cur_loss_mask[idx_seq]=cur_loss_mask[idx_seq]+[0]*padding_len
-                            cur_attention_mask[idx_seq]=cur_attention_mask[idx_seq]+[0]*padding_len
-                            
-                    cur_input_ids=torch.tensor(cur_input_ids, device=device)
-                    cur_attention_mask=torch.tensor(cur_attention_mask, device=device)
-                    cur_loss_mask=torch.tensor(cur_loss_mask, device=device)
-                    cur_rewards=torch.tensor(cur_rewards, device=device).unsqueeze(-1)
-
-                    old_logps = None if grpo_iteration == 0 else batch_old_logps[microbatch_index]
-                    ref_logps = None if grpo_iteration == 0 else batch_ref_logps[microbatch_index]
-                    loss,abs_loss1,loss2,old_logps,ref_logps=compute_target_loss_and_backward(
-                        model,
-                        cur_input_ids,
-                        cur_attention_mask,
-                        cur_loss_mask,
-                        cur_rewards,
-                        epsilon,
-                        beta,
-                        grpo_iteration,
-                        old_logps=old_logps,
-                        ref_logps=ref_logps,
-                        chunk_size=logps_chunk_size,
-                        loss_scale=1.0 / max(len(batch_data['messages']), 1),
-                    )
-                        
-                    if grpo_iteration==0:
-                        batch_old_logps.append(old_logps)
-                        batch_ref_logps.append(ref_logps)
-                    microbatch_index += 1
-                    del cur_input_ids, cur_attention_mask, cur_loss_mask, cur_rewards
-                    
-                    cur_input_ids=[input_ids[j]]
-                    cur_attention_mask=[attention_mask[j]]
-                    cur_loss_mask=[loss_mask[j]]
-                    cur_rewards=[batch_data['std_rewards'][j]]
-                    
-                    cur_max_length=len(input_ids[j])
-                    
-            cur_batch=len(cur_input_ids)
-            for idx_seq in range(cur_batch):
-                
-                cur_len=len(cur_input_ids[idx_seq])
-                padding_len=cur_max_length-cur_len
-                
-                if padding_len>0:
-                    
-                    cur_input_ids[idx_seq]=cur_input_ids[idx_seq]+[0]*padding_len
-                    cur_loss_mask[idx_seq]=cur_loss_mask[idx_seq]+[0]*padding_len
-                    cur_attention_mask[idx_seq]=cur_attention_mask[idx_seq]+[0]*padding_len
-                    
-            cur_input_ids=torch.tensor(cur_input_ids, device=device)
-            cur_attention_mask=torch.tensor(cur_attention_mask, device=device)
-            cur_loss_mask=torch.tensor(cur_loss_mask, device=device)
-            cur_rewards=torch.tensor(cur_rewards, device=device).unsqueeze(-1)
-
-            old_logps = None if grpo_iteration == 0 else batch_old_logps[microbatch_index]
-            ref_logps = None if grpo_iteration == 0 else batch_ref_logps[microbatch_index]
-            loss,abs_loss1,loss2,old_logps,ref_logps=compute_target_loss_and_backward(
-                model,
-                cur_input_ids,
-                cur_attention_mask,
-                cur_loss_mask,
-                cur_rewards,
-                epsilon,
-                beta,
-                grpo_iteration,
-                old_logps=old_logps,
-                ref_logps=ref_logps,
-                chunk_size=logps_chunk_size,
-                loss_scale=1.0 / max(len(batch_data['messages']), 1),
-            )
-                
-            if grpo_iteration==0:
-                batch_old_logps.append(old_logps)
-                batch_ref_logps.append(ref_logps)
-            microbatch_index += 1
-            del cur_input_ids, cur_attention_mask, cur_loss_mask, cur_rewards
+            groups = list(microbatch_index_groups(
+                [len(row) for row in input_ids], max_training_token, max_training_padding_gap
+            ))
+            for microbatch_index, indices in enumerate(groups):
+                padded_length = max(len(input_ids[j]) for j in indices)
+                cur_input_ids = torch.tensor([
+                    input_ids[j] + [0] * (padded_length - len(input_ids[j])) for j in indices
+                ], device=device)
+                cur_attention_mask = torch.tensor([
+                    attention_mask[j] + [0] * (padded_length - len(attention_mask[j])) for j in indices
+                ], device=device)
+                cur_loss_mask = torch.tensor([
+                    loss_mask[j] + [0] * (padded_length - len(loss_mask[j])) for j in indices
+                ], device=device)
+                cur_rewards = torch.tensor([
+                    batch_data['std_rewards'][j] for j in indices
+                ], device=device).unsqueeze(-1)
+                if any(len(input_ids[j]) != len(attention_mask[j]) or
+                       len(input_ids[j]) != len(loss_mask[j]) for j in indices):
+                    raise RuntimeError('GRPO sequence and mask lengths differ')
+                old_logps = None if grpo_iteration == 0 else batch_old_logps[microbatch_index]
+                ref_logps = None if grpo_iteration == 0 else batch_ref_logps[microbatch_index]
+                loss,abs_loss1,loss2,old_logps,ref_logps=compute_target_loss_and_backward(
+                    model, cur_input_ids, cur_attention_mask, cur_loss_mask, cur_rewards,
+                    epsilon, beta, grpo_iteration, old_logps=old_logps,
+                    ref_logps=ref_logps, chunk_size=logps_chunk_size,
+                    loss_scale=1.0 / max(len(batch_data['messages']), 1),
+                )
+                if grpo_iteration == 0:
+                    batch_old_logps.append(old_logps)
+                    batch_ref_logps.append(ref_logps)
+                del cur_input_ids, cur_attention_mask, cur_loss_mask, cur_rewards
 
                 
             optimizer_target.step()
@@ -1940,6 +1988,8 @@ for epoch in epoch_bar:
                     for key, value in _target_lora_state_dict(model.target_model).items()
                 }
                 target_digest_before_analysis = current_policy_id
+                base_draft_digest = state_digest(analysis_base_draft)
+                base_optimizer_digest = state_digest(analysis_base_optimizer)
                 new_teacher_logits = _teacher_prefix_hidden(analysis_batch)
                 teacher_tv = _teacher_tv_from_hidden(
                     analysis_old_teacher_logits,
@@ -1952,7 +2002,8 @@ for epoch in epoch_bar:
                 model.draft_model.load_state_dict(analysis_base_draft, strict=True)
                 _seed_everything(trace_seed + analysis_step * 1009)
                 with torch.inference_mode():
-                    fresh_outputs = speculative_generate(
+                    fresh_outputs = speculative_generate_in_prompt_batches(
+                        prompt_batch_size=analysis_eval_batch_size,
                         model=model,
                         input_ids=analysis_train_input_ids.to('cuda'),
                         attention_mask=analysis_train_attention_mask.to('cuda'),
@@ -1971,13 +2022,13 @@ for epoch in epoch_bar:
                         return_all_draft_input=True,
                         statistical_time=False,
                     )
-                old_available = sum(
-                    max(int(ids.shape[-1]) - int(analysis_train_attention_mask[idx // repeated_generate_nums].sum()) - 1, 0)
-                    for idx, ids in enumerate(outputs['all_draft_input_ids'])
+                old_available = count_eagle3_supervision(
+                    outputs['all_draft_input_ids'], outputs['all_target_hidden_states'],
+                    analysis_train_attention_mask, repeated_generate_nums,
                 )
-                fresh_available = sum(
-                    max(int(ids.shape[-1]) - int(analysis_train_attention_mask[idx // repeated_generate_nums].sum()) - 1, 0)
-                    for idx, ids in enumerate(fresh_outputs['all_draft_input_ids'])
+                fresh_available = count_eagle3_supervision(
+                    fresh_outputs['all_draft_input_ids'], fresh_outputs['all_target_hidden_states'],
+                    analysis_train_attention_mask, repeated_generate_nums,
                 )
                 configured_budget = int(args.analysis_training_token_budget)
                 common_budget = min(old_available, fresh_available)
@@ -1985,6 +2036,16 @@ for epoch in epoch_bar:
                     common_budget = min(common_budget, configured_budget)
                 if common_budget <= 0:
                     raise RuntimeError(f'boundary {analysis_step} has no common valid supervised-token budget')
+                with open(log_file, 'a', encoding='utf-8') as stream:
+                    stream.write(json.dumps({
+                        'phase': 'analysis_budget',
+                        'policy_step': int(analysis_step),
+                        'requested_training_token_budget': configured_budget,
+                        'stale_available_valid_positions': old_available,
+                        'fresh_available_valid_positions': fresh_available,
+                        'actual_common_training_token_budget': common_budget,
+                        'effective_draft_lrs': effective_draft_lrs,
+                    }) + '\n')
                 branch_update_steps = int(args.analysis_draft_update_steps)
                 if common_budget < branch_update_steps:
                     raise RuntimeError(
@@ -1992,7 +2053,7 @@ for epoch in epoch_bar:
                         f'optimizer steps {branch_update_steps}'
                     )
                 torch.save({
-                    'format': 'fastgrpo_policy_lag_base_v3',
+                    'format': 'fastgrpo_policy_lag_base_v4',
                     'policy_step': analysis_step,
                     'policy_t_id': analysis_old_policy_id,
                     'policy_t_plus_1_id': current_policy_id,
@@ -2014,9 +2075,11 @@ for epoch in epoch_bar:
                 ):
                     model.draft_model.load_state_dict(analysis_base_draft, strict=True)
                     optimizer_draft.load_state_dict(deepcopy(analysis_base_optimizer))
-                    if state_digest(model.draft_model.state_dict()) != state_digest(analysis_base_draft):
+                    if [float(group['lr']) for group in optimizer_draft.param_groups] != effective_draft_lrs:
+                        raise RuntimeError(f'{branch_name} restored an unexpected draft LR')
+                    if state_digest(model.draft_model.state_dict()) != base_draft_digest:
                         raise RuntimeError(f'{branch_name} did not start from phi_base')
-                    if state_digest(optimizer_draft.state_dict()) != state_digest(analysis_base_optimizer):
+                    if state_digest(optimizer_draft.state_dict()) != base_optimizer_digest:
                         raise RuntimeError(f'{branch_name} optimizer did not start from phi_base')
                     optimizer_draft.zero_grad(set_to_none=True)
                     consumed_tokens = 0
@@ -2049,23 +2112,39 @@ for epoch in epoch_bar:
                         stale_optimizer_state = branch_optimizer_state
                     branch_losses[branch_name] = loss_totals
                     torch.save({
-                        'format': 'fastgrpo_policy_lag_branch_v3',
+                        'format': 'fastgrpo_policy_lag_branch_v4',
                         'branch': branch_name,
                         'policy_step': analysis_step,
                         'feature_policy_version': feature_policy,
-                        'base_digest': state_digest(analysis_base_draft),
+                        'base_digest': base_draft_digest,
                         'draft_state_dict': branch_states[branch_name],
                         'optimizer_state_dict': branch_optimizer_state,
                         'scheduler_state_dict': None,
                         'actual_training_token_count': int(common_budget),
+                        'requested_training_token_budget': configured_budget,
+                        'effective_draft_lr': effective_draft_lrs[0],
                         'optimizer_steps': branch_update_steps,
                         'losses': branch_losses[branch_name],
                     }, boundary_dir / f'draft_{branch_name}.pt')
+                    with open(log_file, 'a', encoding='utf-8') as stream:
+                        stream.write(json.dumps({
+                            'phase': 'analysis_branch_update',
+                            'policy_step': int(analysis_step),
+                            'branch': branch_name,
+                            'requested_training_token_budget': configured_budget,
+                            'actual_used_valid_positions': consumed_tokens,
+                            'optimizer_steps': branch_update_steps,
+                            'effective_draft_lr': effective_draft_lrs[0],
+                            'base_draft_id': base_draft_digest,
+                            'base_optimizer_id': base_optimizer_digest,
+                        }) + '\n')
 
                 # The stale branch is now the real training draft. Its next
                 # rollout is the measured rollout *and* the next GRPO input.
                 model.draft_model.load_state_dict(branch_states['stale'], strict=True)
                 optimizer_draft.load_state_dict(stale_optimizer_state)
+                if [float(group['lr']) for group in optimizer_draft.param_groups] != effective_draft_lrs:
+                    raise RuntimeError('committed stale branch has an unexpected draft LR')
                 draft_step += branch_update_steps - 1
                 _restore_analysis_rng(analysis_main_rng)
                 model.draft_model.train(draft_was_training)
@@ -2073,17 +2152,21 @@ for epoch in epoch_bar:
                 if state_digest(_target_lora_state_dict(model.target_model)) != target_digest_before_analysis:
                     raise RuntimeError('target policy changed during policy-lag evaluation')
                 pending_analysis = {
-                    'format': 'fastgrpo_policy_lag_pending_v3',
+                    'format': 'fastgrpo_policy_lag_pending_v4',
                     'policy_step': analysis_step,
                     'source_epoch': int(epoch + 1),
                     'source_batch': int(i),
                     'source_prompt_batch_id': state_digest(analysis_batch['input_ids']),
                     'old_policy_id': analysis_old_policy_id,
                     'policy_checkpoint_id': current_policy_id,
-                    'base_draft_id': state_digest(analysis_base_draft),
+                    'base_draft_id': base_draft_digest,
                     'stale_draft_id': state_digest(branch_states['stale']),
                     'fresh_draft_id': state_digest(branch_states['fresh']),
                     'common_training_token_budget': int(common_budget),
+                    'requested_training_token_budget': configured_budget,
+                    'stale_available_valid_positions': old_available,
+                    'fresh_available_valid_positions': fresh_available,
+                    'effective_draft_lr': effective_draft_lrs[0],
                     'optimizer_steps_per_branch': branch_update_steps,
                     'teacher_shift_tv': teacher_tv,
                     'evaluation_scope': 'next_real_grpo_rollout',
@@ -2201,6 +2284,7 @@ for epoch in epoch_bar:
         batch_data['messages'].clear()
         batch_data['rewards'].clear()
         batch_data['std_rewards'].clear()
+        batch_data['response_ids'].clear()
         batch_old_logps.clear()
         batch_ref_logps.clear()
 

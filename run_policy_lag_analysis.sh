@@ -14,7 +14,8 @@ DRAFT_CONFIG="${DRAFT_CONFIG:-$SCRIPT_DIR/configs/qwen25_7b/eagle3_full_vocab.js
 DRAFT_INITIALIZATION_MODE="${DRAFT_INITIALIZATION_MODE:-pretrained}" # pretrained|random (explicit)
 VOCAB_MAPPING="${VOCAB_MAPPING:-}" # empty is valid only for a full-vocabulary draft config
 
-DATASET_PATH="${DATASET_PATH:-$WORKSPACE/data/gsm8k/main}"
+DATASET_PATH="${TRAIN_DATASET_PATH:-${DATASET_PATH:-$WORKSPACE/data/gsm8k/main}}"
+EVAL_DATASET_PATH="${EVAL_DATASET_PATH:-}"
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
 TRAIN_OPTION="${TRAIN_OPTION:-gsm8k}"
 OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/qwen25_7b_gsm8k}"
@@ -22,12 +23,15 @@ ANALYSIS_BOUNDARIES="${ANALYSIS_BOUNDARIES:-1,5,10}"
 ANALYSIS_INTERVAL="${ANALYSIS_INTERVAL:-0}"
 TOTAL_POLICY_STEPS="${TOTAL_POLICY_STEPS:-11}" # boundary 10 needs a real next rollout/update
 NUM_EPOCHS="${NUM_EPOCHS:-2}"
+ANALYSIS_EVAL_PROMPTS="${ANALYSIS_EVAL_PROMPTS:-8}"
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
 
-TRAINING_TOKEN_BUDGET="${TRAINING_TOKEN_BUDGET:-1024}"
+DRAFT_TOKEN_BUDGET="${DRAFT_TOKEN_BUDGET:-8192}"
+TARGET_MAX_TRAINING_TOKEN="${TARGET_MAX_TRAINING_TOKEN:-1024}"
 DRAFT_UPDATE_STEPS="${DRAFT_UPDATE_STEPS:-1}"
-DRAFT_LR="${DRAFT_LR:-1e-6}"
+DRAFT_LR="${DRAFT_LR:-1e-5}"
 TARGET_LR="${TARGET_LR:-1e-6}"
-TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-$ANALYSIS_EVAL_PROMPTS}"
 GRADIENT_ACCUMULATION="${GRADIENT_ACCUMULATION:-4}"
 DRAFT_GRADIENT_ACCUMULATION="${DRAFT_GRADIENT_ACCUMULATION:-1}"
 RESPONSES_PER_PROMPT="${RESPONSES_PER_PROMPT:-8}"
@@ -65,6 +69,15 @@ DRY_RUN="${DRY_RUN:-false}"
 
 if [[ "$NPROC_PER_NODE" != "1" ]]; then
   echo "FastGRPO upstream decoder is single-process; set NPROC_PER_NODE=1 and select one GPU with CUDA_VISIBLE_DEVICES." >&2
+  exit 2
+fi
+if [[ -n "${TRAINING_TOKEN_BUDGET:-}" ]]; then
+  echo "TRAINING_TOKEN_BUDGET is obsolete; use DRAFT_TOKEN_BUDGET and TARGET_MAX_TRAINING_TOKEN separately." >&2
+  exit 2
+fi
+if (( TRAIN_BATCH_SIZE != ANALYSIS_EVAL_PROMPTS || EVAL_BATCH_SIZE <= 0 ||
+      DRAFT_TOKEN_BUDGET <= 0 || TARGET_MAX_TRAINING_TOKEN <= 0 )); then
+  echo "Require TRAIN_BATCH_SIZE=ANALYSIS_EVAL_PROMPTS and positive eval batch/budgets." >&2
   exit 2
 fi
 if (( DRAFT_UPDATE_STEPS <= 0 )); then
@@ -108,6 +121,7 @@ validation=(
   --draft-checkpoint "$DRAFT_CHECKPOINT" --draft-config "$DRAFT_CONFIG"
   --draft-initialization-mode "$DRAFT_INITIALIZATION_MODE"
   --vocab-mapping "$VOCAB_MAPPING" --dataset-path "$DATASET_PATH"
+  --eval-dataset-path "$EVAL_DATASET_PATH"
 )
 
 if [[ "$DRY_RUN" == "true" ]]; then
@@ -122,11 +136,13 @@ if [[ "$SMOKE_TEST" == "true" ]]; then
   ANALYSIS_BOUNDARIES=1
   MAX_TRAIN_SAMPLES=2
   TRAIN_BATCH_SIZE=1
+  ANALYSIS_EVAL_PROMPTS=1
   GRADIENT_ACCUMULATION=1
   RESPONSES_PER_PROMPT=2
   MAX_LENGTH="${SMOKE_MAX_LENGTH:-128}"
   MAX_PROMPT_LENGTH="${SMOKE_MAX_PROMPT_LENGTH:-96}"
-  TRAINING_TOKEN_BUDGET="${SMOKE_TRAINING_TOKEN_BUDGET:-32}"
+  DRAFT_TOKEN_BUDGET="${SMOKE_DRAFT_TOKEN_BUDGET:-32}"
+  TARGET_MAX_TRAINING_TOKEN="${SMOKE_TARGET_MAX_TRAINING_TOKEN:-32}"
   BOOTSTRAP_SAMPLES=100
 fi
 
@@ -151,6 +167,7 @@ cmd=(
   --model_type qwen2
   --train_option "$TRAIN_OPTION"
   --dataset_path "$DATASET_PATH"
+  --eval_dataset_path "$EVAL_DATASET_PATH"
   --train_split "$TRAIN_SPLIT"
   --train_data_fraction "$TRAIN_DATA_FRACTION"
   --max_train_samples "$MAX_TRAIN_SAMPLES"
@@ -168,7 +185,7 @@ cmd=(
   --top_p "$TOP_P"
   --max_length "$MAX_LENGTH"
   --max_prompt_length "$MAX_PROMPT_LENGTH"
-  --max_training_token "$TRAINING_TOKEN_BUDGET"
+  --max_training_token "$TARGET_MAX_TRAINING_TOKEN"
   --max_training_padding_gap 4096
   --grpo_iteration_num 1
   --repeated_generate_nums "$RESPONSES_PER_PROMPT"
@@ -192,7 +209,9 @@ cmd=(
   --policy_lag_output_dir "$OUTPUT_DIR/analysis"
   --analysis_boundaries "$ANALYSIS_BOUNDARIES"
   --analysis_interval "$ANALYSIS_INTERVAL"
-  --analysis_training_token_budget "$TRAINING_TOKEN_BUDGET"
+  --analysis_eval_prompts "$ANALYSIS_EVAL_PROMPTS"
+  --analysis_eval_batch_size "$EVAL_BATCH_SIZE"
+  --analysis_training_token_budget "$DRAFT_TOKEN_BUDGET"
   --analysis_draft_update_steps "$DRAFT_UPDATE_STEPS"
   --analysis_bootstrap_samples "$BOOTSTRAP_SAMPLES"
   --analysis_resume "$ANALYSIS_RESUME"
