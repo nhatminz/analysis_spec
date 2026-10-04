@@ -92,6 +92,7 @@ class PolicyLagExportTests(unittest.TestCase):
                         output,
                         [{"policy_step": 1, "prompt_id": "p0"}],
                         [summary(1)],
+                        plot=True,
                     )
 
             self.assertEqual(status["status"], "skipped")

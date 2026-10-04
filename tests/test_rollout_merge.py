@@ -47,6 +47,19 @@ class RolloutMergeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inconsistent decoder field'):
             merge_rollout_outputs([part(10, True), part(20, False)])
 
+    def test_reflex_chunk_timings_are_summed_and_per_update_recomputed(self):
+        parts = [part(10, False), part(20, False)]
+        for index, value in enumerate(parts):
+            value.update(reflex_updates=2 + index, reflex_update_count=2 + index,
+                         reflex_update_gpu_ms=3.0 + index, reflex_update_exposed_ms=0.5,
+                         reflex_state_initialized_zero=True, reflex_state_cleared=True)
+        result = merge_rollout_outputs(parts)
+        self.assertEqual(result['reflex_update_count'], 5)
+        self.assertEqual(result['reflex_update_gpu_ms'], 7.0)
+        self.assertEqual(result['reflex_update_gpu_ms_per_update'], 7 / 5)
+        self.assertEqual(result['reflex_update_exposed_ms'], 1.0)
+        self.assertTrue(result['reflex_state_cleared'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import weakref
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -18,6 +19,19 @@ from torch import nn
 
 
 SPECFORGE_COMMIT = "3cb0510f0bd0e8c195ac6e9c5c62f6b50580ff83"
+
+
+def rollout_tensor_for_training(tensor: torch.Tensor) -> torch.Tensor:
+    """Make inference-only rollout inputs safe to save for draft backward.
+
+    Views, detach(), and same-dtype/device to() do not remove inference status.
+    Clone only those inputs, outside inference mode; ordinary inputs keep their
+    storage and autograd graph. Values, dtype and device are unchanged.
+    """
+    if not torch.is_inference(tensor):
+        return tensor
+    with torch.inference_mode(False):
+        return tensor.clone()
 
 
 def require_specforge():
@@ -72,7 +86,17 @@ class _TargetVocabHead(nn.Module):
 
     def __init__(self, draft_model):
         super().__init__()
-        self.draft_model = draft_model
+        # Do not register the already-owned draft model a second time under the
+        # compatibility head. FastGRPO freezes ``lm_head.parameters()``; a
+        # registered reference here would accidentally freeze all EAGLE weights.
+        object.__setattr__(self, "_draft_model_ref", weakref.ref(draft_model))
+
+    @property
+    def draft_model(self):
+        model = self._draft_model_ref()
+        if model is None:
+            raise RuntimeError("EAGLE-3 draft model was released")
+        return model
 
     def forward(self, hidden_states):
         compact = self.draft_model.compute_logits(hidden_states)
@@ -207,6 +231,23 @@ class Eagle3FastGRPOAdapter(nn.Module):
     def device(self):
         return next(self.draft_model.parameters()).device
 
+    @property
+    def compact_vocab_size(self):
+        return int(self.draft_model.draft_vocab_size)
+
+    def compute_compact_logits(self, hidden_states):
+        """Return native SpecForge logits without scattering to target vocab."""
+        return self.draft_model.compute_logits(hidden_states)
+
+    def compact_to_target_ids(self, compact_ids=None, *, device=None):
+        """Map compact EAGLE indices to target tokenizer ids on device."""
+        target_ids = torch.arange(
+            self.compact_vocab_size,
+            device=device or self.device,
+            dtype=torch.long,
+        ) + self.draft_model.d2t.to(device or self.device)
+        return target_ids if compact_ids is None else target_ids[compact_ids]
+
     def checkpoint_metadata(self):
         return {
             "specforge_commit": SPECFORGE_COMMIT,
@@ -268,13 +309,13 @@ class Eagle3FastGRPOAdapter(nn.Module):
         value = attn.v_proj(mixed).view(bsz, q_len, attn.num_key_value_heads, attn.head_dim).transpose(1, 2)
         past_len = 0 if not past_key_values else past_key_values[0][0].shape[-2]
         if position_ids is None:
-            position_ids = torch.arange(past_len, past_len + q_len, device=mixed.device).unsqueeze(0)
+            position_ids = torch.arange(
+                past_len, past_len + q_len, device=mixed.device, dtype=torch.long,
+            ).unsqueeze(0)
         else:
-            # RoPE indexes its cosine/sine tables with position_ids.  Some
-            # legacy FastGRPO prefill paths constructed these ids through a
-            # floating-point zeros tensor, which autocast could turn into
-            # BF16.  Normalize at the adapter boundary so every caller passes
-            # a valid index tensor to SpecForge's compiled rotary helper.
+            # RoPE indexes its cos/sin tables with these IDs. Legacy Model
+            # already normalizes supplied IDs to long; preserve that contract
+            # here too without casting positions to the BF16 model dtype.
             position_ids = position_ids.to(device=mixed.device, dtype=torch.long)
         cos, sin = attn.rotary_emb(value, seq_len=past_len + q_len)
         # Import the exact rotary/repeat helpers used by the pinned SpecForge model.

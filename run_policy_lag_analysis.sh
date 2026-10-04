@@ -4,25 +4,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
 SPECFORGE_DIR="${SPECFORGE_DIR:-$SCRIPT_DIR/third_party/SpecForge}"
+SPECNAACL_DIR="${SPECNAACL_DIR:-$SCRIPT_DIR/../SpecNaacl}"
 
 # All experiment knobs are overrideable here or as environment variables.
-TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-7B-Instruct}"
+TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-3B-Instruct}"
 TARGET_ADAPTER_PATH="${TARGET_ADAPTER_PATH:-}"
 TARGET_RESUME_CHECKPOINT="${TARGET_RESUME_CHECKPOINT:-}"
-DRAFT_CHECKPOINT="${DRAFT_CHECKPOINT:-}"
-DRAFT_CONFIG="${DRAFT_CONFIG:-$SCRIPT_DIR/configs/qwen25_7b/eagle3_full_vocab.json}"
+DRAFT_CHECKPOINT="${DRAFT_CHECKPOINT:-$SPECNAACL_DIR/outputs/pretrain/qwen25_3b/latest_checkpoint}"
+DRAFT_CONFIG="${DRAFT_CONFIG:-$SPECNAACL_DIR/outputs/pretrain/qwen25_3b/latest_draft_config.json}"
 DRAFT_INITIALIZATION_MODE="${DRAFT_INITIALIZATION_MODE:-pretrained}" # pretrained|random (explicit)
-VOCAB_MAPPING="${VOCAB_MAPPING:-}" # empty is valid only for a full-vocabulary draft config
+VOCAB_MAPPING="${VOCAB_MAPPING-$SPECNAACL_DIR/outputs/pretrain/qwen25_3b/latest_vocab_mapping.pt}" # explicit empty: full vocab
 
 DATASET_PATH="${TRAIN_DATASET_PATH:-${DATASET_PATH:-$WORKSPACE/data/gsm8k/main}}"
 EVAL_DATASET_PATH="${EVAL_DATASET_PATH:-}"
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
 TRAIN_OPTION="${TRAIN_OPTION:-gsm8k}"
-OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/qwen25_7b_gsm8k}"
-ANALYSIS_BOUNDARIES="${ANALYSIS_BOUNDARIES:-1,5,10}"
-ANALYSIS_INTERVAL="${ANALYSIS_INTERVAL:-0}"
-TOTAL_POLICY_STEPS="${TOTAL_POLICY_STEPS:-11}" # boundary 10 needs a real next rollout/update
-NUM_EPOCHS="${NUM_EPOCHS:-2}"
+OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/qwen25_3b_reflex_v5_$(date -u +%Y%m%dT%H%M%S)}"
+ANALYSIS_BOUNDARIES="${ANALYSIS_BOUNDARIES:-1}"
+ANALYSIS_INTERVAL="${ANALYSIS_INTERVAL:-5}"
+TOTAL_POLICY_STEPS="${TOTAL_POLICY_STEPS:-600}" # absolute target step; boundary 600 excluded
+NUM_EPOCHS="${NUM_EPOCHS:-2}" # minimum; analysis auto-extends until the step limit
+ANALYSIS_KEEP_BRANCH_CHECKPOINTS="${ANALYSIS_KEEP_BRANCH_CHECKPOINTS:-0}"
 ANALYSIS_EVAL_PROMPTS="${ANALYSIS_EVAL_PROMPTS:-8}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
 
@@ -40,6 +42,16 @@ MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-2048}"
 TEMPERATURE="${TEMPERATURE:-1.0}"
 TOP_P="${TOP_P:-0.95}"
 TRACE_SEED="${TRACE_SEED:-42}"
+REFLEX_BACKEND="${REFLEX_BACKEND:-triton}"
+REFLEX_FEEDBACK_SCOPE="${REFLEX_FEEDBACK_SCOPE:-root}"
+REFLEX_PROPOSAL_STRATEGY="${REFLEX_PROPOSAL_STRATEGY:-fused}"
+REFLEX_CORRECTION_STRATEGY="${REFLEX_CORRECTION_STRATEGY:-serial}"
+REFLEX_FEEDBACK_STRATEGY="${REFLEX_FEEDBACK_STRATEGY:-serial}"
+REFLEX_FEATURE_STRATEGY="${REFLEX_FEATURE_STRATEGY:-auto}"
+REFLEX_UPDATE_STREAM="${REFLEX_UPDATE_STREAM:-1}"
+REFLEX_FEATURE_DIM="${REFLEX_FEATURE_DIM:-8}"
+REFLEX_LR="${REFLEX_LR:-0.05}"
+REFLEX_WEIGHT_DECAY="${REFLEX_WEIGHT_DECAY:-0.0}"
 
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
@@ -122,6 +134,7 @@ validation=(
   --draft-initialization-mode "$DRAFT_INITIALIZATION_MODE"
   --vocab-mapping "$VOCAB_MAPPING" --dataset-path "$DATASET_PATH"
   --eval-dataset-path "$EVAL_DATASET_PATH"
+  --reflex-backend "$REFLEX_BACKEND"
 )
 
 if [[ "$DRY_RUN" == "true" ]]; then
@@ -134,6 +147,7 @@ if [[ "$SMOKE_TEST" == "true" ]]; then
   "$PYTHON_BIN" "$SCRIPT_DIR/policy_lag_analysis.py" --mode smoke --output-dir "$OUTPUT_DIR/analysis/plumbing_smoke"
   TOTAL_POLICY_STEPS=2
   ANALYSIS_BOUNDARIES=1
+  ANALYSIS_INTERVAL=0
   MAX_TRAIN_SAMPLES=2
   TRAIN_BATCH_SIZE=1
   ANALYSIS_EVAL_PROMPTS=1
@@ -215,6 +229,17 @@ cmd=(
   --analysis_draft_update_steps "$DRAFT_UPDATE_STEPS"
   --analysis_bootstrap_samples "$BOOTSTRAP_SAMPLES"
   --analysis_resume "$ANALYSIS_RESUME"
+  --analysis_keep_branch_checkpoints "$ANALYSIS_KEEP_BRANCH_CHECKPOINTS"
+  --reflex_backend "$REFLEX_BACKEND"
+  --reflex_feedback_scope "$REFLEX_FEEDBACK_SCOPE"
+  --reflex_proposal_strategy "$REFLEX_PROPOSAL_STRATEGY"
+  --reflex_correction_strategy "$REFLEX_CORRECTION_STRATEGY"
+  --reflex_feedback_strategy "$REFLEX_FEEDBACK_STRATEGY"
+  --reflex_feature_strategy "$REFLEX_FEATURE_STRATEGY"
+  --reflex_update_stream "$REFLEX_UPDATE_STREAM"
+  --reflex_feature_dim "$REFLEX_FEATURE_DIM"
+  --reflex_lr "$REFLEX_LR"
+  --reflex_weight_decay "$REFLEX_WEIGHT_DECAY"
 )
 
 printf 'Command:'; printf ' %q' "${cmd[@]}"; printf '\n'

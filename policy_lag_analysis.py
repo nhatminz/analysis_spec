@@ -17,8 +17,10 @@ import os
 import random
 import subprocess
 import sys
+import time
 import warnings
-from dataclasses import asdict, dataclass
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -27,6 +29,70 @@ import numpy as np
 
 SPECFORGE_COMMIT = "3cb0510f0bd0e8c195ac6e9c5c62f6b50580ff83"
 FASTGRPO_COMMIT = "38e252493149072d2c5905f0a47de1d935d7170a"
+PROTOCOL_VERSION = "fastgrpo_policy_lag_protocol_v5"
+BRANCHES = ("stale", "fresh", "reflex")
+STEP_METRIC_COLUMNS = (
+    "policy_step", "stale_aal", "fresh_aal", "reflex_aal",
+    "fresh_minus_stale_aal", "reflex_minus_stale_aal",
+    "stale_accepted_length_sum", "stale_verification_rounds",
+    "fresh_accepted_length_sum", "fresh_verification_rounds",
+    "reflex_accepted_length_sum", "reflex_verification_rounds", "teacher_shift_tv",
+    "fresh_minus_stale_ci_low", "fresh_minus_stale_ci_high",
+    "reflex_minus_stale_ci_low", "reflex_minus_stale_ci_high",
+    "requested_training_token_budget", "actual_training_token_budget",
+    "draft_optimizer_steps", "effective_draft_lr",
+    "stale_online_draft_update_gpu_ms", "fresh_online_draft_update_gpu_ms",
+    "reflex_update_gpu_ms", "reflex_update_count", "reflex_update_gpu_ms_per_update",
+    "reflex_update_exposed_ms", "analysis_io_wall_ms",
+)
+
+
+class AnalysisIO:
+    """CPU wall time of serialization/writes only, never GPU computation.
+
+    Materialize CPU tensor snapshots BEFORE entering measure(). The tiny final
+    io_timing.json write is excluded to avoid self-referential timing.
+    """
+    def __init__(self):
+        self.wall_ms = 0.0
+
+    @contextmanager
+    def measure(self):
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.wall_ms += (time.perf_counter() - started) * 1000.0
+
+
+def cleanup_branch_checkpoints(output_dir, durable_target_step, *, keep=False):
+    """Delete only explicit temporary files AFTER the following GRPO save.
+
+    A completion marker alone is not enough: replay after a pre-checkpoint
+    crash still needs draft_fresh/stale. Scalar journals and raw data survive.
+    """
+    removed = []
+    if keep:
+        return removed
+    for marker in Path(output_dir).glob("boundaries/step_*/complete.json"):
+        completion = json.loads(marker.read_text(encoding="utf-8"))
+        if int(completion["next_target_optimizer_step"]) > durable_target_step:
+            continue
+        for name in ("phi_base.pt", "draft_stale.pt", "draft_fresh.pt"):
+            path = marker.parent / name
+            if path.is_file():
+                path.unlink()
+                removed.append(str(path))
+    return removed
+
+
+def mark_durable_boundaries(output_dir, target_step):
+    """The training checkpoint is committed before its result markers."""
+    for marker in Path(output_dir).glob('boundaries/step_*/complete.json'):
+        completion = json.loads(marker.read_text(encoding='utf-8'))
+        if int(completion['next_target_optimizer_step']) <= target_step and not completion.get('durable_target_checkpoint'):
+            completion['durable_target_checkpoint'] = True
+            atomic_json(marker, completion)
 
 
 def atomic_json(path: Path, payload) -> None:
@@ -45,12 +111,16 @@ def atomic_text(path: Path, content: str) -> None:
 
 def load_completed_results(output_dir: Path) -> tuple[set[int], list[dict], list[BranchSummary]]:
     """Resume only boundaries with a completion marker, never partial exports."""
+    protocol_path = output_dir / "protocol.json"
+    protocol = json.loads(protocol_path.read_text(encoding="utf-8")) if protocol_path.is_file() else {}
     completed = set()
     for marker in output_dir.glob("boundaries/step_*/complete.json"):
         payload = json.loads(marker.read_text(encoding="utf-8"))
         step = int(payload["policy_step"])
         if marker.parent.name != f"step_{step}":
             raise ValueError(f"completion marker has mismatched policy_step: {marker}")
+        if protocol.get('format') == PROTOCOL_VERSION and not payload.get('durable_target_checkpoint'):
+            continue
         completed.add(step)
 
     def read_jsonl(path: Path) -> list[dict]:
@@ -58,25 +128,40 @@ def load_completed_results(output_dir: Path) -> tuple[set[int], list[dict], list
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    if completed and not all(
+    if protocol.get("format") == PROTOCOL_VERSION:
+        # Canonical small per-boundary journals recover even an interrupted
+        # append of the global CSV/JSONL files, with no duplicate rows.
+        responses, summaries = [], []
+        for step in sorted(completed):
+            journal = output_dir / "boundaries" / f"step_{step}" / "results.json"
+            if not journal.is_file():
+                raise RuntimeError(f"completed boundary has no result journal: {journal}")
+            payload = json.loads(journal.read_text(encoding="utf-8"))
+            if int(payload['policy_step']) != step:
+                raise RuntimeError(f"result journal policy_step mismatch: {journal}")
+            responses.extend(payload['per_response'])
+            boundary_summaries = [BranchSummary(**row) for row in payload['summaries']]
+            timing_path = journal.parent / 'io_timing.json'
+            if timing_path.is_file():
+                io_ms = json.loads(timing_path.read_text())['analysis_io_wall_ms']
+                boundary_summaries = [replace(row, analysis_io_wall_ms=io_ms) for row in boundary_summaries]
+            summaries.extend(boundary_summaries)
+    elif completed and not all(
         (output_dir / name).is_file() for name in ("per_response.jsonl", "summary.jsonl")
     ):
         raise RuntimeError(f"completed policy-lag boundaries lack result files in {output_dir}")
-    responses = [
-        row for row in read_jsonl(output_dir / "per_response.jsonl")
-        if int(row["policy_step"]) in completed
-    ]
-    summaries = [
-        BranchSummary(**row) for row in read_jsonl(output_dir / "summary.jsonl")
-        if int(row["policy_step"]) in completed
-    ]
-    protocol_path = output_dir / "protocol.json"
+    if protocol.get("format") != PROTOCOL_VERSION:
+        responses = [row for row in read_jsonl(output_dir / "per_response.jsonl")
+                     if int(row["policy_step"]) in completed]
+        summaries = [BranchSummary(**row) for row in read_jsonl(output_dir / "summary.jsonl")
+                     if int(row["policy_step"]) in completed]
     if protocol_path.is_file():
         protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
         if protocol.get("format") in {
             "fastgrpo_policy_lag_protocol_v3", "fastgrpo_policy_lag_protocol_v4"
-        }:
-            required = {"base", "stale", "fresh"}
+        } or protocol.get("format") == PROTOCOL_VERSION:
+            required = (set(BRANCHES) if protocol.get("format") == PROTOCOL_VERSION
+                        else {"base", "stale", "fresh"})
             for step in completed:
                 response_branches = {row["branch"] for row in responses if int(row["policy_step"]) == step}
                 step_summaries = [row for row in summaries if row.policy_step == step]
@@ -84,12 +169,18 @@ def load_completed_results(output_dir: Path) -> tuple[set[int], list[dict], list
                 if response_branches != required or summary_branches != required:
                     raise RuntimeError(
                         f"completed policy-lag boundary {step} is missing paired "
-                        f"base/stale/fresh records in {output_dir}"
+                        f"{'/'.join(sorted(required))} records in {output_dir}"
                     )
                 if len(step_summaries) != len(required):
                     raise RuntimeError(
                         f"completed policy-lag boundary {step} has duplicate branch summaries in {output_dir}"
                     )
+                if protocol.get('format') == PROTOCOL_VERSION:
+                    step_rows = [row for row in responses if int(row['policy_step']) == step]
+                    for branch in ('fresh', 'reflex'):
+                        bootstrap_delta_by_prompt(
+                            [row for row in step_rows if row['branch'] == 'stale'],
+                            [row for row in step_rows if row['branch'] == branch], seed=0, samples=1)
     return completed, responses, summaries
 
 
@@ -262,6 +353,13 @@ class BranchSummary:
     evaluation_prompt_batch_id: str | None = None
     requested_training_token_budget: int | None = None
     effective_draft_lr: float | None = None
+    accepted_length_sum: int | None = None
+    online_draft_update_gpu_ms: float | None = None
+    reflex_update_gpu_ms: float | None = None
+    reflex_update_count: int | None = None
+    reflex_update_gpu_ms_per_update: float | None = None
+    reflex_update_exposed_ms: float | None = None
+    analysis_io_wall_ms: float | None = None
 
 
 class BoundaryJournal:
@@ -294,6 +392,7 @@ def write_results(
     output_dir: Path,
     per_response: Sequence[Mapping],
     summaries: Sequence[BranchSummary],
+    *, plot: bool = False,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     response_path = output_dir / "per_response.jsonl"
@@ -307,12 +406,24 @@ def write_results(
         summary_jsonl,
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
     )
-    if rows:
-        stream = io.StringIO(newline="")
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-        atomic_text(output_dir / "summary.csv", stream.getvalue())
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=list(BranchSummary.__dataclass_fields__))
+    writer.writeheader()
+    writer.writerows(rows)
+    atomic_text(output_dir / "summary.csv", stream.getvalue())
+    step_rows = build_step_metrics(per_response, rows)
+    for row in step_rows:
+        timing_path = output_dir / 'boundaries' / f"step_{row['policy_step']}" / 'io_timing.json'
+        if timing_path.is_file():
+            row['analysis_io_wall_ms'] = json.loads(timing_path.read_text())['analysis_io_wall_ms']
+    atomic_text(output_dir / "step_metrics.jsonl", "".join(json.dumps(row) + "\n" for row in step_rows))
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=STEP_METRIC_COLUMNS)
+    writer.writeheader()
+    writer.writerows(step_rows)
+    atomic_text(output_dir / "step_metrics.csv", stream.getvalue())
+    if not plot:
+        return {"status": "deferred", "reason": "plot only at end of run or --mode plot"}
     plot_status = plot_results(rows, output_dir / "aal_policy_lag.png")
     atomic_json(output_dir / "plot_status.json", plot_status)
     if plot_status["status"] == "skipped":
@@ -323,6 +434,81 @@ def write_results(
             stacklevel=2,
         )
     return plot_status
+
+
+def build_step_metrics(per_response, summaries):
+    """One exact ratio-of-sums row per three-way boundary, never mean AAL."""
+    output = []
+    for step in sorted({int(row['policy_step']) for row in summaries}):
+        by_branch = {row['branch']: row for row in summaries if int(row['policy_step']) == step}
+        if not set(BRANCHES) <= set(by_branch):
+            continue  # Old v3/v4 results remain exportable/plotable.
+        if sum(int(row['policy_step']) == step for row in summaries) != 3:
+            raise ValueError(f"duplicate or unexpected branch summary at boundary {step}")
+        row = dict.fromkeys(STEP_METRIC_COLUMNS)
+        row['policy_step'] = step
+        for branch in BRANCHES:
+            records = [item for item in per_response
+                       if int(item['policy_step']) == step and item['branch'] == branch]
+            aal, accepted, rounds, _ = weighted_aal(records)
+            row[f'{branch}_aal'] = aal
+            row[f'{branch}_accepted_length_sum'] = accepted
+            row[f'{branch}_verification_rounds'] = rounds
+            if not np.isclose(aal, by_branch[branch]['aal']):
+                raise ValueError(f"summary AAL disagrees with raw counters: {step}/{branch}")
+        for branch in ('fresh', 'reflex'):
+            row[f'{branch}_minus_stale_aal'] = row[f'{branch}_aal'] - row['stale_aal']
+            row[f'{branch}_minus_stale_ci_low'] = by_branch[branch].get('ci_low')
+            row[f'{branch}_minus_stale_ci_high'] = by_branch[branch].get('ci_high')
+        stale, fresh, reflex = (by_branch[branch] for branch in BRANCHES)
+        row.update(teacher_shift_tv=stale['teacher_shift_tv'],
+                   requested_training_token_budget=stale.get('requested_training_token_budget'),
+                   actual_training_token_budget=stale['actual_training_token_count'],
+                   draft_optimizer_steps=stale['optimizer_steps'], effective_draft_lr=stale.get('effective_draft_lr'),
+                   stale_online_draft_update_gpu_ms=stale.get('online_draft_update_gpu_ms'),
+                   fresh_online_draft_update_gpu_ms=fresh.get('online_draft_update_gpu_ms'),
+                   analysis_io_wall_ms=stale.get('analysis_io_wall_ms'))
+        for name in ('reflex_update_gpu_ms', 'reflex_update_count', 'reflex_update_gpu_ms_per_update',
+                     'reflex_update_exposed_ms'):
+            row[name] = reflex.get(name)
+        output.append(row)
+    return output
+
+
+def _append_csv(path, rows, columns):
+    has_header = path.is_file() and path.stat().st_size > 0
+    with path.open('a', encoding='utf-8', newline='') as stream:
+        writer = csv.DictWriter(stream, fieldnames=columns)
+        if not has_header:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
+def append_boundary_results(output_dir, per_response, summaries, completion, *, io_meter):
+    """Append only this boundary; journal first, completion marker last.
+
+    Global append files are derived views. Startup/end aggregation rebuilds
+    them once from complete journals if a process died mid-append.
+    """
+    step = int(completion['policy_step'])
+    boundary = output_dir / 'boundaries' / f'step_{step}'
+    before = io_meter.wall_ms
+    rows = [asdict(item) for item in summaries]
+    metrics = build_step_metrics(per_response, rows)[0]
+    with io_meter.measure():
+        atomic_json(boundary / 'results.json', dict(policy_step=step, per_response=per_response, summaries=rows))
+        for filename, records in (('per_response.jsonl', per_response), ('summary.jsonl', rows)):
+            with (output_dir / filename).open('a', encoding='utf-8') as stream:
+                stream.write(''.join(json.dumps(row, sort_keys=True) + '\n' for row in records))
+        _append_csv(output_dir / 'summary.csv', rows, list(rows[0]))
+    metrics['analysis_io_wall_ms'] = float(completion.get('analysis_io_wall_ms', 0)) + io_meter.wall_ms - before
+    with io_meter.measure():
+        append_jsonl(output_dir / 'step_metrics.jsonl', metrics)
+        _append_csv(output_dir / 'step_metrics.csv', [metrics], STEP_METRIC_COLUMNS)
+        atomic_json(boundary / 'complete.json', completion)
+    metrics['analysis_io_wall_ms'] = float(completion.get('analysis_io_wall_ms', 0)) + io_meter.wall_ms - before
+    atomic_json(boundary / 'io_timing.json', {'analysis_io_wall_ms': metrics['analysis_io_wall_ms']})
+    return metrics
 
 
 def plot_results(rows: Sequence[Mapping], path: Path) -> dict:
@@ -342,24 +528,15 @@ def plot_results(rows: Sequence[Mapping], path: Path) -> dict:
         for row in rows:
             grouped.setdefault((int(row["policy_step"]), row["branch"]), []).append(float(row["aal"]))
         steps = sorted({key[0] for key in grouped})
-        base = [np.mean(grouped[(step, "base")]) for step in steps] if all((step, "base") in grouped for step in steps) else None
-        stale = [np.mean(grouped[(step, "stale")]) for step in steps]
-        fresh = [np.mean(grouped[(step, "fresh")]) for step in steps]
-        delta = [f - s for s, f in zip(stale, fresh)]
-        delta_rows = [next(row for row in rows if int(row["policy_step"]) == step and row["branch"] == "fresh") for step in steps]
-        low = [d - float(row["ci_low"]) if row.get("ci_low") is not None else 0 for d, row in zip(delta, delta_rows)]
-        high = [float(row["ci_high"]) - d if row.get("ci_high") is not None else 0 for d, row in zip(delta, delta_rows)]
-        figure, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
-        axes[0].plot(steps, stale, marker="o", label="stale supervision")
-        axes[0].plot(steps, fresh, marker="o", label="fresh supervision")
-        if base is not None:
-            axes[0].plot(steps, base, marker="o", label="draft before branch update")
-        axes[0].set_ylabel("AAL (root/bonus included)")
-        axes[0].legend()
-        axes[1].axhline(0.0, color="black", linewidth=1)
-        axes[1].errorbar(steps, delta, yerr=[low, high], marker="o", capsize=3)
-        axes[1].set_ylabel("delta AAL (fresh - stale)")
-        axes[1].set_xlabel("target update boundary (next real GRPO rollout)")
+        figure, axis = plt.subplots(figsize=(9, 5))
+        for branch in BRANCHES:
+            if all((step, branch) in grouped for step in steps):
+                if any(len(grouped[(step, branch)]) != 1 for step in steps):
+                    raise ValueError('plot requires one aggregate branch AAL per policy step')
+                axis.plot(steps, [grouped[(step, branch)][0] for step in steps], label=branch)
+        axis.set_ylabel("AAL (root/bonus included)")
+        axis.legend()
+        axis.set_xlabel("policy step (evaluated on next real GRPO rollout)")
         figure.tight_layout()
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
@@ -449,6 +626,9 @@ def dependency_report(repo: Path) -> dict:
         "grpo_speculative.py", "helper/specualtive_generate.py",
         "helper/eagle3_specforge.py", "helper/eagle3_supervision.py",
         "helper/response_batches.py", "helper/rollout_merge.py",
+        "helper/policy_lag_protocol.py", "helper/fast_lk_reflex.py",
+        "helper/fast_lk_reflex_kernels.py", "helper/tree_verification.py",
+        "helper/sampling.py", "helper/rollout_history.py", "helper/reflex_port.json",
         "policy_lag_analysis.py",
         "run_policy_lag_analysis.sh", "run_policy_lag_analysis_b200.sh",
         "scripts/prepare_dapo_policy_lag.py",
@@ -459,7 +639,8 @@ def dependency_report(repo: Path) -> dict:
         name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
         for name in source_files
     }
-    for module in ("torch", "transformers", "peft", "datasets", "specforge"):
+    report['reflex_port'] = json.loads((repo / 'helper/reflex_port.json').read_text())
+    for module in ("torch", "transformers", "peft", "datasets", "specforge", "triton"):
         try:
             imported = __import__(module)
             report[module] = getattr(imported, "__version__", "installed")
@@ -534,28 +715,54 @@ def smoke_test(output_dir: Path) -> None:
         {"prompt_id": "p0", "accepted_length_sum": 6, "verification_rounds": 2, "generated_tokens": 5},
         {"prompt_id": "p1", "accepted_length_sum": 4, "verification_rounds": 2, "generated_tokens": 4},
     ]
-    boot = bootstrap_delta_by_prompt(stale_records, fresh_records, seed=7, samples=100)
+    from helper.fast_lk_reflex import FastLKReflex
+    persistent = state_digest({'draft': branches['stale'][0].state_dict(),
+                               'optimizer': branches['stale'][1].state_dict()})
+    reflex = FastLKReflex(feature_dim=2, backend='torch')
+    reflex.start(2, 2, 3, 'cpu')
+    assert torch.count_nonzero(reflex.state) == 0
+    mapping = torch.arange(2)
+    logits = branches['stale'][0](x_fresh).unsqueeze(1).detach()
+    reflex.propose(logits, x_fresh.unsqueeze(1), 2, mapping, root=True)
+    reflex.update_from_target_probs(branches['fresh'][0](x_fresh).detach().softmax(-1), mapping)
+    reflex_stats = reflex.finish()
+    reflex.clear()
+    assert reflex.state is None
+    assert persistent == state_digest({'draft': branches['stale'][0].state_dict(),
+                                       'optimizer': branches['stale'][1].state_dict()})
+    # Synthetic counters test export plumbing only, not measured acceptance.
+    reflex_records = [dict(row, accepted_length_sum=row['accepted_length_sum'] + 2) for row in stale_records]
+    boots = {name: bootstrap_delta_by_prompt(stale_records, records, seed=7, samples=100)
+             for name, records in (('fresh', fresh_records), ('reflex', reflex_records))}
     summaries = []
-    for branch, records in (("stale", stale_records), ("fresh", fresh_records)):
-        aal, _, rounds, generated = weighted_aal(records)
+    for branch, records in (("stale", stale_records), ("fresh", fresh_records), ('reflex', reflex_records)):
+        aal, accepted, rounds, generated = weighted_aal(records)
+        boot = boots.get(branch, {})
         summaries.append(BranchSummary(
             policy_step=1, seed=7, branch=branch, aal=aal,
-            delta_aal=boot["delta_aal"] if branch == "fresh" else None,
+            delta_aal=boot.get("delta_aal"),
             verification_rounds=rounds, generated_tokens=generated,
             actual_training_token_count=2, optimizer_steps=1,
             policy_checkpoint_id="smoke-theta-1", draft_checkpoint_id=f"smoke-{branch}",
             feature_policy_version="smoke-theta-1", teacher_shift_tv=0.0,
-            ci_low=boot["delta_aal_ci_low"] if branch == "fresh" else None,
-            ci_high=boot["delta_aal_ci_high"] if branch == "fresh" else None,
+            ci_low=boot.get("delta_aal_ci_low"),
+            ci_high=boot.get("delta_aal_ci_high"),
+            accepted_length_sum=accepted,
+            reflex_update_count=reflex_stats.updates if branch == 'reflex' else None,
         ))
     tagged = []
-    for branch, records in (("stale", stale_records), ("fresh", fresh_records)):
+    for branch, records in (("stale", stale_records), ("fresh", fresh_records), ('reflex', reflex_records)):
         for row in records:
             tagged.append({**row, "policy_step": 1, "seed": 7, "branch": branch, "smoke_test": True})
-    write_results(output_dir, tagged, summaries)
+    atomic_json(output_dir / 'protocol.json', {'format': PROTOCOL_VERSION, 'research_result': False})
+    append_boundary_results(output_dir, tagged, summaries,
+        {'policy_step': 1, 'next_target_optimizer_step': 2, 'durable_target_checkpoint': True,
+         'research_result': False}, io_meter=AnalysisIO())
     atomic_json(output_dir / "smoke_validation.json", {
         "status": "passed", "research_result": False,
-        "checks": ["collect", "identical_initialization", "equal_token_budget", "equal_optimizer_steps", "evaluate", "weighted_aal", "prompt_bootstrap", "export"],
+        "checks": ["collect", "identical_initialization", "equal_token_budget", "equal_optimizer_steps",
+                   "reflex_uses_stale", "reflex_state_reset", "persistent_optimizer_unchanged", "evaluate",
+                   "weighted_aal", "three_way_prompt_bootstrap", "append_export"],
     })
 
 
@@ -571,6 +778,7 @@ def build_parser():
     parser.add_argument("--vocab-mapping", default="")
     parser.add_argument("--dataset-path", default="")
     parser.add_argument("--eval-dataset-path", default="")
+    parser.add_argument("--reflex-backend", choices=['triton', 'torch', 'auto'], default='triton')
     return parser
 
 
@@ -582,11 +790,10 @@ def main():
         print(f"Smoke test passed: {output}")
         return
     if args.mode == "plot":
-        completed, _, summaries = load_completed_results(output)
+        completed, responses, summaries = load_completed_results(output)
         if not completed or not summaries:
             raise RuntimeError(f"no completed policy-lag results to plot in {output}")
-        status = plot_results([asdict(item) for item in summaries], output / "aal_policy_lag.png")
-        atomic_json(output / "plot_status.json", status)
+        status = write_results(output, responses, summaries, plot=True)
         print(json.dumps(status, indent=2, sort_keys=True))
         return
     report = dependency_report(Path(__file__).resolve().parent)
@@ -597,7 +804,7 @@ def main():
             report["train_eval_disjointness"] = dataset_disjointness_report(
                 Path(args.dataset_path), Path(args.eval_dataset_path)
             )
-        report["analysis_protocol"] = "fastgrpo_policy_lag_protocol_v4"
+        report["analysis_protocol"] = PROTOCOL_VERSION
         atomic_json(output / "dependencies.json", report)
         if sys.version_info < (3, 11):
             raise RuntimeError(
@@ -605,6 +812,8 @@ def main():
             )
         if str(report.get("specforge", "")).startswith("MISSING"):
             raise RuntimeError(report["specforge"])
+        if args.reflex_backend == 'triton' and str(report.get('triton', '')).startswith('MISSING'):
+            raise RuntimeError('Production Reflex requires Triton: ' + report['triton'])
         from packaging.version import Version
 
         torch_version = str(report.get('torch', '')).split('+', 1)[0]

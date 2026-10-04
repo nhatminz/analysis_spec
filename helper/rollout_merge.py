@@ -15,6 +15,8 @@ SUM_FIELDS = (
     'total_time_cost', 'target_time_cost', 'draft_time_cost',
     'check_time_cost', 'prefill_time_cost', 'post_time_cost',
 )
+REFLEX_SUM_FIELDS = ('reflex_updates', 'reflex_update_count', 'reflex_update_gpu_ms',
+                     'reflex_update_exposed_ms')
 
 
 def merge_rollout_outputs(parts):
@@ -32,6 +34,13 @@ def merge_rollout_outputs(parts):
                 combined[field].extend(part[field])
         for field in SUM_FIELDS:
             combined[field] += part[field]
+        for field in REFLEX_SUM_FIELDS:
+            if field in part:
+                combined[field] = (combined.get(field, 0) + part[field]
+                                   if part[field] is not None else None)
+        for field in ('reflex_state_initialized_zero', 'reflex_state_cleared'):
+            if field in part:
+                combined[field] = combined[field] and part[field]
         combined['max_sequence_length'] = max(
             combined['max_sequence_length'], part['max_sequence_length']
         )
@@ -43,6 +52,9 @@ def merge_rollout_outputs(parts):
     combined['total_acc'] = (
         combined['total_acc_length'] / max(combined['total_decoded_token_num'], 1)
     )
+    if combined.get('reflex_update_gpu_ms') is not None:
+        combined['reflex_update_gpu_ms_per_update'] = (
+            combined['reflex_update_gpu_ms'] / max(combined['reflex_update_count'], 1))
     if any(len(combined[field]) != len(combined['generated_token_ids']) for field in (
         'response_accepted_length_sum', 'response_verification_rounds',
         'response_generated_tokens',

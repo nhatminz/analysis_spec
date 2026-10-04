@@ -4,9 +4,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/.." && pwd)"
 SPECFORGE_DIR="${SPECFORGE_DIR:-$SCRIPT_DIR/third_party/SpecForge}"
+SPECNAACL_DIR="${SPECNAACL_DIR:-$SCRIPT_DIR/../SpecNaacl}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-# Policy-lag v4 evaluates the next real GRPO batch of eight training prompts.
+# Policy-lag v5: stale/off, fresh/off, stale+Reflex on the next real batch.
 # The stale rollout of that batch is reused for the target update.
+TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-3B-Instruct}"
+DRAFT_CHECKPOINT="${DRAFT_CHECKPOINT:-$SPECNAACL_DIR/outputs/pretrain/qwen25_3b/latest_checkpoint}"
+DRAFT_CONFIG="${DRAFT_CONFIG:-$SPECNAACL_DIR/outputs/pretrain/qwen25_3b/latest_draft_config.json}"
+VOCAB_MAPPING="${VOCAB_MAPPING:-$SPECNAACL_DIR/outputs/pretrain/qwen25_3b/latest_vocab_mapping.pt}"
 ANALYSIS_EVAL_PROMPTS="${ANALYSIS_EVAL_PROMPTS:-8}"
 EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-8}"
 RESPONSES_PER_PROMPT="${RESPONSES_PER_PROMPT:-8}"
@@ -16,72 +21,67 @@ DRAFT_LR="${DRAFT_LR:-1e-5}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-$ANALYSIS_EVAL_PROMPTS}"
 TRAIN_DATASET_PATH="${TRAIN_DATASET_PATH:-${DATASET_PATH:-}}"
 EVAL_DATASET_PATH="${EVAL_DATASET_PATH:-}"
-ANALYSIS_BOUNDARIES="${ANALYSIS_BOUNDARIES:-1,5,10}"
-ANALYSIS_INTERVAL="${ANALYSIS_INTERVAL:-0}"
-TOTAL_POLICY_STEPS="${TOTAL_POLICY_STEPS:-11}"
+ANALYSIS_BOUNDARIES="${ANALYSIS_BOUNDARIES:-1}"
+ANALYSIS_INTERVAL="${ANALYSIS_INTERVAL:-5}"
+TOTAL_POLICY_STEPS="${TOTAL_POLICY_STEPS:-600}"
+NUM_EPOCHS="${NUM_EPOCHS:-2}" # Python auto-extends if skipped batches need more.
 TRACE_SEED="${TRACE_SEED:-42}"
-
-GLOBAL_LATEST_RUN="$WORKSPACE/outputs/specforge/latest_run"
-TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-}"
-PRETRAIN_ROOT="${PRETRAIN_ROOT:-}"
-if [[ -z "$TARGET_MODEL_PATH" && -z "$PRETRAIN_ROOT" && -e "$GLOBAL_LATEST_RUN" ]]; then
-  PRETRAIN_ROOT="$(readlink -f "$GLOBAL_LATEST_RUN")"
-fi
-if [[ -z "$TARGET_MODEL_PATH" && -n "$PRETRAIN_ROOT" && -f "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" ]]; then
-  TARGET_MODEL_PATH="$($PYTHON_BIN - "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1], encoding='utf-8'))['target_model_path'])
-PY
-)"
-fi
-TARGET_MODEL_PATH="${TARGET_MODEL_PATH:-/workspace/storage-shared/models/Qwen2.5-3B-Instruct}"
+ANALYSIS_KEEP_BRANCH_CHECKPOINTS="${ANALYSIS_KEEP_BRANCH_CHECKPOINTS:-0}"
+REFLEX_BACKEND="${REFLEX_BACKEND:-triton}"
+REFLEX_FEEDBACK_SCOPE="${REFLEX_FEEDBACK_SCOPE:-root}"
+REFLEX_PROPOSAL_STRATEGY="${REFLEX_PROPOSAL_STRATEGY:-fused}"
+REFLEX_CORRECTION_STRATEGY="${REFLEX_CORRECTION_STRATEGY:-serial}"
+REFLEX_FEEDBACK_STRATEGY="${REFLEX_FEEDBACK_STRATEGY:-serial}"
+REFLEX_FEATURE_STRATEGY="${REFLEX_FEATURE_STRATEGY:-auto}"
+REFLEX_UPDATE_STREAM="${REFLEX_UPDATE_STREAM:-1}"
+REFLEX_FEATURE_DIM="${REFLEX_FEATURE_DIM:-8}"
+REFLEX_LR="${REFLEX_LR:-0.05}"
+REFLEX_WEIGHT_DECAY="${REFLEX_WEIGHT_DECAY:-0.0}"
 MODEL_BASENAME="$(basename "${TARGET_MODEL_PATH%/}")"
 MODEL_SLUG="$(printf '%s' "$MODEL_BASENAME" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_')"
 MODEL_SLUG="${MODEL_SLUG%_}"
-MODEL_OUTPUT_ROOT="${MODEL_OUTPUT_ROOT:-$WORKSPACE/outputs/specforge/$MODEL_SLUG}"
-if [[ -z "$PRETRAIN_ROOT" && -e "$MODEL_OUTPUT_ROOT/latest_run" ]]; then
-  PRETRAIN_ROOT="$(readlink -f "$MODEL_OUTPUT_ROOT/latest_run")"
-fi
-PRETRAIN_RUN_ID="$(basename "${PRETRAIN_ROOT:-unresolved_latest}")"
-if [[ -n "$PRETRAIN_ROOT" && -f "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" ]]; then
-  "$PYTHON_BIN" - "$PRETRAIN_ROOT/checkpoints/pretrain_complete.json" "$TARGET_MODEL_PATH" <<'PY'
-import json, os, sys
-recorded = os.path.realpath(json.load(open(sys.argv[1], encoding='utf-8'))['target_model_path'])
-requested = os.path.realpath(sys.argv[2])
-if recorded != requested:
-    raise SystemExit(f"pretrain target mismatch: checkpoint={recorded}, requested={requested}")
-PY
-fi
 DAPO_PARQUET="${DAPO_PARQUET:-$WORKSPACE/data/DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet}"
 DAPO_SPLIT_DIR="${DAPO_SPLIT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/dapo_math_seed42}"
 DAPO_ANALYSIS_SAMPLES="${DAPO_ANALYSIS_SAMPLES:-5000}"
 DAPO_EVAL_SAMPLES="${DAPO_EVAL_SAMPLES:-512}"
 DAPO_SPLIT_SEED="${DAPO_SPLIT_SEED:-42}"
 
-DRAFT_CHECKPOINT="${DRAFT_CHECKPOINT:-$MODEL_OUTPUT_ROOT/latest_checkpoint}"
-DRAFT_CONFIG="${DRAFT_CONFIG:-$MODEL_OUTPUT_ROOT/latest_draft_config.json}"
-VOCAB_MAPPING="${VOCAB_MAPPING:-$MODEL_OUTPUT_ROOT/latest_vocab_mapping.pt}"
-OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/$MODEL_SLUG/${PRETRAIN_RUN_ID}_dapo5k}"
+OUTPUT_DIR="${OUTPUT_DIR:-$WORKSPACE/outputs/fastgrpo/policy_lag/$MODEL_SLUG/reflex_v5_$(date -u +%Y%m%dT%H%M%S)}"
 
 FORCE_DAPO_SPLIT="${FORCE_DAPO_SPLIT:-false}"
 PREPARE_DAPO_ONLY="${PREPARE_DAPO_ONLY:-false}"
 
-# Catch the pre-v4 launcher before expensive data preparation. Evaluation
+# Catch incompatible launchers before expensive data preparation. Evaluation
 # prompt count is now a supported flag; only the old seeds flag is invalid.
 if grep -Eq -- '--analysis_seeds([[:space:]]|$)|--num_epochs[[:space:]]+1000000([[:space:]]|$)' "$SCRIPT_DIR/run_policy_lag_analysis.sh"; then
   echo "Incompatible run_policy_lag_analysis.sh: old policy-lag CLI/epoch settings detected." >&2
   echo "Sync run_policy_lag_analysis.sh and run_policy_lag_analysis_b200.sh from the same fastgrpo revision." >&2
   exit 2
 fi
-for required_flag in --analysis_eval_prompts --analysis_eval_batch_size --analysis_training_token_budget; do
+for required_flag in --analysis_eval_prompts --analysis_eval_batch_size --analysis_training_token_budget --reflex_backend --analysis_keep_branch_checkpoints; do
   if ! grep -Fq -- "$required_flag" "$SCRIPT_DIR/run_policy_lag_analysis.sh"; then
-    echo "Incompatible generic launcher: missing $required_flag. Deploy both v4 launchers together." >&2
+    echo "Incompatible generic launcher: missing $required_flag. Deploy both v5 launchers together." >&2
     exit 2
   fi
 done
 
 export PYTHONPATH="$SPECFORGE_DIR:$SCRIPT_DIR:$WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+
+if [[ "${DRY_RUN:-false}" != "true" && "$PREPARE_DAPO_ONLY" != "true" ]]; then
+  [[ -f "$DRAFT_CHECKPOINT/training_state.pt" || -f "$DRAFT_CHECKPOINT/model.safetensors" ||
+     -f "$DRAFT_CHECKPOINT/model.safetensors.index.json" || -f "$DRAFT_CHECKPOINT/pytorch_model.bin" ||
+     -f "$DRAFT_CHECKPOINT/pytorch_model.bin.index.json" || -f "$DRAFT_CHECKPOINT" ]] || {
+    echo "EAGLE-3 pretrained checkpoint not found: $DRAFT_CHECKPOINT" >&2; exit 2;
+  }
+  [[ -f "$DRAFT_CONFIG" ]] || { echo "Draft config not found: $DRAFT_CONFIG" >&2; exit 2; }
+  [[ -f "$VOCAB_MAPPING" ]] || { echo "Vocabulary mapping not found: $VOCAB_MAPPING" >&2; exit 2; }
+  # Freeze moving latest symlinks once; a concurrent pretrain save must not
+  # change the checkpoint between protocol logging and model construction.
+  DRAFT_CHECKPOINT="$(readlink -f "$DRAFT_CHECKPOINT")"
+  DRAFT_CONFIG="$(readlink -f "$DRAFT_CONFIG")"
+  VOCAB_MAPPING="$(readlink -f "$VOCAB_MAPPING")"
+fi
 
 custom_train_path="$TRAIN_DATASET_PATH"
 if [[ -n "$custom_train_path" || -n "${EVAL_DATASET_PATH:-}" ]]; then
@@ -108,15 +108,6 @@ if [[ "$PREPARE_DAPO_ONLY" == "true" ]]; then
   exit 0
 fi
 
-if [[ "${DRY_RUN:-false}" != "true" ]]; then
-  [[ -f "$DRAFT_CHECKPOINT/training_state.pt" ]] || {
-    echo "SpecForge draft checkpoint not found: $DRAFT_CHECKPOINT/training_state.pt" >&2
-    echo "Run: bash $SCRIPT_DIR/pretrain_eagle3_sharegpt_b200.sh" >&2
-    exit 2
-  }
-  [[ -f "$VOCAB_MAPPING" ]] || { echo "Vocabulary mapping not found: $VOCAB_MAPPING" >&2; exit 2; }
-fi
-
 export SPECFORGE_DIR PYTHON_BIN TARGET_MODEL_PATH DRAFT_CHECKPOINT DRAFT_CONFIG VOCAB_MAPPING OUTPUT_DIR
 export DRAFT_INITIALIZATION_MODE=pretrained
 export DATASET_PATH="${custom_train_path:-$DAPO_SPLIT_DIR/train.jsonl}"
@@ -124,6 +115,9 @@ export EVAL_DATASET_PATH="${EVAL_DATASET_PATH:-$DAPO_SPLIT_DIR/eval.jsonl}"
 export TRAIN_SPLIT=train TRAIN_OPTION=DAPO-math
 export TRAIN_DATA_FRACTION=1.0 MAX_TRAIN_SAMPLES="$DAPO_ANALYSIS_SAMPLES"
 export TRACE_SEED ANALYSIS_BOUNDARIES ANALYSIS_INTERVAL TOTAL_POLICY_STEPS
+export NUM_EPOCHS ANALYSIS_KEEP_BRANCH_CHECKPOINTS
+export REFLEX_BACKEND REFLEX_FEEDBACK_SCOPE REFLEX_PROPOSAL_STRATEGY REFLEX_CORRECTION_STRATEGY
+export REFLEX_FEEDBACK_STRATEGY REFLEX_FEATURE_STRATEGY REFLEX_UPDATE_STREAM REFLEX_FEATURE_DIM REFLEX_LR REFLEX_WEIGHT_DECAY
 export DRAFT_TOKEN_BUDGET TARGET_MAX_TRAINING_TOKEN DRAFT_LR ANALYSIS_EVAL_PROMPTS
 export DRAFT_UPDATE_STEPS="${DRAFT_UPDATE_STEPS:-1}"
 export TRAIN_BATCH_SIZE EVAL_BATCH_SIZE
