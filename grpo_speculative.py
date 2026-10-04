@@ -2,6 +2,7 @@ import os
 import sys
 import random
 import hashlib
+import shutil
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -120,6 +121,25 @@ def _atomic_torch_save(state, path):
     os.replace(tmp_path, path)
 
 
+def _atomic_latest_checkpoint(checkpoint_path, latest_path):
+    """Publish latest without serializing a multi-GB optimizer twice.
+
+    Both names live in the same directory. A hard link is cheap on normal
+    shared filesystems; a streaming copy handles filesystems that forbid it.
+    The old latest remains usable until the atomic replace succeeds.
+    """
+    temporary = latest_path.with_name(latest_path.name + ".tmp")
+    # A crash may leave this temporary name hard-linked to an older step.
+    # Remove only that known temporary link before writing, so fallback copy
+    # cannot truncate the older checkpoint through the shared inode.
+    temporary.unlink(missing_ok=True)
+    try:
+        os.link(checkpoint_path, temporary)
+    except OSError:
+        shutil.copyfile(checkpoint_path, temporary)
+    os.replace(temporary, latest_path)
+
+
 def _cpu_snapshot(value):
     # All GPU->CPU copies must be OUTSIDE the analysis IO timer.
     if torch.is_tensor(value):
@@ -129,6 +149,27 @@ def _cpu_snapshot(value):
     if isinstance(value, (list, tuple)):
         return type(value)(_cpu_snapshot(item) for item in value)
     return deepcopy(value)
+
+
+def _resource_snapshot():
+    """Read Linux process/cgroup pressure without synchronizing CUDA."""
+    snapshot = {}
+    try:
+        resident_pages = int(Path('/proc/self/statm').read_text().split()[1])
+        snapshot['process_rss_mb'] = round(resident_pages * os.sysconf('SC_PAGE_SIZE') / 1048576, 1)
+    except (OSError, ValueError, IndexError):
+        snapshot['process_rss_mb'] = None
+    for filename, key in (('memory.current', 'cgroup_memory_current_mb'),
+                          ('memory.max', 'cgroup_memory_limit_mb')):
+        try:
+            value = (Path('/sys/fs/cgroup') / filename).read_text().strip()
+            snapshot[key] = None if value == 'max' else round(int(value) / 1048576, 1)
+        except (OSError, ValueError):
+            snapshot[key] = None
+    if torch.cuda.is_available():
+        snapshot['cuda_allocated_mb'] = round(torch.cuda.memory_allocated() / 1048576, 1)
+        snapshot['cuda_reserved_mb'] = round(torch.cuda.memory_reserved() / 1048576, 1)
+    return snapshot
 
 
 def _prune_checkpoints(checkpoint_dir, keep_last):
@@ -199,7 +240,7 @@ def save_training_checkpoint(
     )
     checkpoint_path = checkpoint_dir / f"{checkpoint_label}_epoch{int(epoch) + 1}_batch{int(next_batch)}.pt"
     _atomic_torch_save(state, checkpoint_path)
-    _atomic_torch_save(state, checkpoint_dir / "latest.pt")
+    _atomic_latest_checkpoint(checkpoint_path, checkpoint_dir / "latest.pt")
     _prune_checkpoints(checkpoint_dir, keep_last)
     print(f"Saved FastGRPO checkpoint: {checkpoint_path}")
     return checkpoint_path
@@ -222,6 +263,31 @@ def load_training_checkpoint(path, *, model, optimizer_target, optimizer_draft):
     if torch.cuda.is_available() and checkpoint.get("cuda_rng_state_all") is not None:
         torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state_all"])
     return checkpoint
+
+
+_PRE_MEMORY_FIX_GRPO_SHA256 = "8285ddae244840c038f014174518331d5665cd0575822a577ada6a60822ed367"
+
+
+def _accept_memory_maintenance_protocol(protocol_path, existing, current):
+    """Allow only the exact v5 source used by the interrupted B200 run.
+
+    Every experiment field and every other source hash must match. Keep the
+    original source fingerprint in a sidecar before updating protocol.json.
+    This resource-only patch does not change the three-branch experiment.
+    """
+    prior = deepcopy(current)
+    prior["source_sha256"]["grpo_speculative.py"] = _PRE_MEMORY_FIX_GRPO_SHA256
+    if existing != prior:
+        return False
+    audit_path = protocol_path.parent / "memory_maintenance.json"
+    atomic_json(audit_path, {
+        "format": "fastgrpo_policy_lag_memory_maintenance_v1",
+        "previous_source_sha256": existing["source_sha256"],
+        "current_source_sha256": current["source_sha256"],
+        "reason": "bounded analysis snapshots and rollout supervision lifetime; single checkpoint serialization",
+    })
+    atomic_json(protocol_path, current)
+    return True
 
 
 parser = argparse.ArgumentParser(description="Training configuration")
@@ -489,8 +555,12 @@ if analysis_enabled:
         'source_sha256': source_sha256,
     }
     if protocol_path.is_file():
-        if json.loads(protocol_path.read_text(encoding='utf-8')) != protocol:
-            raise RuntimeError(f'incompatible policy-lag protocol in {protocol_path}; use a new OUTPUT_DIR')
+        existing_protocol = json.loads(protocol_path.read_text(encoding='utf-8'))
+        if existing_protocol != protocol:
+            if not (_as_bool(args.analysis_resume) and args.resume_checkpoint
+                    and _accept_memory_maintenance_protocol(protocol_path, existing_protocol, protocol)):
+                raise RuntimeError(f'incompatible policy-lag protocol in {protocol_path}; use a new OUTPUT_DIR')
+            print(f'Applied audited memory maintenance to existing v5 run: {protocol_path}')
     elif any((analysis_root / name).exists() for name in ('summary.jsonl', 'per_response.jsonl', 'boundaries')):
         raise RuntimeError(f'existing policy-lag results have no v5 protocol in {analysis_root}; use a new OUTPUT_DIR')
     else:
@@ -1290,6 +1360,9 @@ if resume_checkpoint:
     if reset_rng_on_resume:
         _seed_everything(trace_seed)
         print(f"Reset continuation RNG state to paired trace seed={trace_seed}")
+    # The checkpoint has already been copied into the models/optimizers. Do
+    # not retain its full CPU draft and AdamW tensors for the entire run.
+    del checkpoint
 
 # A continuation trace uses local counters so --max_grpo_steps=100 means 100
 # newly completed labels even when the restored checkpoint is already at 310.
@@ -1780,16 +1853,20 @@ for epoch in epoch_bar:
             'input_ids': analysis_train_input_ids,
             'attention_mask': analysis_train_attention_mask,
         }
+        next_boundary = (analysis_enabled
+                         and _analysis_boundary(target_optimizer_steps + 1)
+                         and target_optimizer_steps + 1 not in analysis_completed)
         analysis_base_draft = None
         analysis_base_optimizer = None
         analysis_old_teacher_logits = None
         analysis_old_policy_id = None
         analysis_old_policy_state = None
-        if analysis_enabled:
+        if next_boundary or pending_analysis is not None:
             analysis_base_draft = {
                 key: value.detach().cpu().clone()
                 for key, value in model.draft_model.state_dict().items()
             }
+        if next_boundary:
             analysis_base_optimizer = _cpu_snapshot(optimizer_draft.state_dict())
             analysis_old_policy_state = {
                 key: value.detach().cpu().clone()
@@ -1797,6 +1874,10 @@ for epoch in epoch_bar:
             }
             analysis_old_policy_id = state_digest(analysis_old_policy_state)
             analysis_old_teacher_logits = _teacher_prefix_hidden(analysis_batch)
+        elif pending_analysis is not None:
+            # The pending next-real rollout still verifies theta_(t+1) before
+            # target.step(), but it does not need a second LoRA/teacher copy.
+            analysis_old_policy_id = state_digest(_target_lora_state_dict(model.target_model))
         pending_reflex_rows = None
         pending_reflex_timing = None
         pending_fresh_rows = None
@@ -1823,6 +1904,8 @@ for epoch in epoch_bar:
             if state_digest(model.draft_model.state_dict()) != pending_analysis['stale_draft_id']:
                 raise RuntimeError(f'stale branch was not restored before real GRPO rollout {pending_step}')
             del fresh_state
+            if not next_boundary:
+                analysis_base_draft = None
         messages=batch['messages']
         answers=batch['answers']
         
@@ -1892,6 +1975,13 @@ for epoch in epoch_bar:
                 optimizer_draft.zero_grad(set_to_none=True)
                 draft_step += 1
                 draft_update_committed = True
+        if not next_boundary:
+            # Online draft backward has finished. These response-length GPU
+            # feature/teacher tensors are not inputs to target GRPO. Keeping
+            # them through target backward increases peak allocation at every
+            # non-boundary step, even though analysis only runs every fifth.
+            for field in ('all_draft_input_states', 'all_target_hidden_states', 'all_draft_input_ids'):
+                outputs[field] = None
     
         if draft_step % 1024 == 0 and step > 0 and is_train_draft:
             with open(f"{saved_statistics_dir}/{step}.pkl","wb") as f:
@@ -2377,6 +2467,9 @@ for epoch in epoch_bar:
                     analysis_old_policy_state, current_policy_state,
                     analysis_old_teacher_logits, new_teacher_logits, fresh_outputs,
                 )
+                analysis_base_draft = None
+                for field in ('all_draft_input_states', 'all_target_hidden_states', 'all_draft_input_ids'):
+                    outputs[field] = None
             
             if statistical_time and torch.cuda.is_available():
                 torch.cuda.synchronize()
@@ -2520,6 +2613,12 @@ for epoch in epoch_bar:
                     mark_durable_boundaries(analysis_root, target_optimizer_steps)
                     removed = cleanup_branch_checkpoints(
                         analysis_root, target_optimizer_steps, keep=analysis_keep_branch_checkpoints)
+                    with open(log_file, 'a', encoding='utf-8') as stream:
+                        stream.write(json.dumps({
+                            'phase': 'resource_after_checkpoint',
+                            'target_optimizer_steps': int(target_optimizer_steps),
+                            **_resource_snapshot(),
+                        }) + '\n')
                 if removed:
                     print(f'Cleaned {len(removed)} temporary branch checkpoints after durable GRPO save.')
 

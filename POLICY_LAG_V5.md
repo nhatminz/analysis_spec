@@ -58,6 +58,21 @@ Use a new OUTPUT_DIR for v5. Protocol/source/config hashes reject old v4 or
 changed experiment configurations. Resume with the same OUTPUT_DIR, immutable
 original draft assets and RESUME=true ANALYSIS_RESUME=true.
 
+For the B200 run that reached target step 59 before a process-level `Killed`,
+the memory maintenance patch recognizes only its recorded v5
+`grpo_speculative.py` SHA-256. All model/data/config fields and other source
+hashes must still match. The original and updated source hashes are retained
+in `analysis/memory_maintenance.json`. The patch captures full draft/AdamW,
+LoRA and teacher snapshots only on batches that can reach an analysis boundary;
+pending evaluation retains just its stale draft snapshot and target identity.
+After ordinary online draft training, rollout supervision tensors are released
+before GRPO target backward unless the current batch reaches a boundary.
+Checkpoint `latest.pt` is published from the already serialized step file,
+using an atomic hard link or streaming-copy fallback. Each saved target step
+records process RSS, cgroup memory and CUDA allocation in `logs/train.jsonl`
+as `phase=resource_after_checkpoint`. A bare `Killed` message does not by
+itself establish whether memory pressure or an external job limit sent SIGKILL.
+
 Pending boundaries keep draft_stale.pt (including its optimizer for retries)
 and draft_fresh.pt. Phi_base.pt is needed only for optional debug retention.
 Temporary branch files are removed only after the following GRPO training

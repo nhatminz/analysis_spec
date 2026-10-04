@@ -2,9 +2,12 @@ import copy
 import ast
 import os
 import random
+import shutil
 import tempfile
 import unittest
+import json
 from pathlib import Path
+from unittest import mock
 
 from helper.policy_lag_protocol import branch_spec, is_analysis_boundary, paired_shadow_rollout
 
@@ -121,12 +124,12 @@ class PairedShadowTests(unittest.TestCase):
         # Exercise the actual save/load functions without importing the
         # top-level script (which parses CLI and loads the 3B target).
         source = Path(__file__).resolve().parents[1] / 'grpo_speculative.py'
-        selected = {'_atomic_torch_save', '_prune_checkpoints',
+        selected = {'_atomic_torch_save', '_atomic_latest_checkpoint', '_prune_checkpoints',
                     'save_training_checkpoint', 'load_training_checkpoint'}
         definitions = [node for node in ast.parse(source.read_text()).body
                        if isinstance(node, ast.FunctionDef) and node.name in selected]
         self.assertEqual({node.name for node in definitions}, selected)
-        namespace = dict(torch=torch, np=np, random=random, os=os, Path=Path,
+        namespace = dict(torch=torch, np=np, random=random, os=os, shutil=shutil, Path=Path,
                          _target_lora_state_dict=lambda model: model.state_dict(),
                          _load_target_lora_state_dict=lambda model, state: model.load_state_dict(state))
         exec(compile(ast.Module(body=definitions, type_ignores=[]), str(source), 'exec'), namespace)
@@ -142,11 +145,15 @@ class PairedShadowTests(unittest.TestCase):
                     torch.rand(2, device='cuda').cpu().tolist() if torch.cuda.is_available() else None)
 
         with tempfile.TemporaryDirectory() as directory:
-            namespace['save_training_checkpoint'](
-                directory, model=model, optimizer_target=target_optimizer, optimizer_draft=self.optimizer,
-                epoch=3, next_batch=2, step=6, used_items=24, draft_step=11,
-                draft_accumulated_step=11, batch_data=self.real_buffer, keep_last=3,
-                target_optimizer_steps=6)
+            with mock.patch.object(torch, 'save', wraps=torch.save) as save_mock:
+                namespace['save_training_checkpoint'](
+                    directory, model=model, optimizer_target=target_optimizer, optimizer_draft=self.optimizer,
+                    epoch=3, next_batch=2, step=6, used_items=24, draft_step=11,
+                    draft_accumulated_step=11, batch_data=self.real_buffer, keep_last=3,
+                    target_optimizer_steps=6)
+            self.assertEqual(save_mock.call_count, 1)
+            self.assertEqual((Path(directory) / 'latest.pt').stat().st_ino,
+                             (Path(directory) / 'target6_epoch4_batch2.pt').stat().st_ino)
             expected = draw()
             self.draft.weight.data.add_(1)
             self.optimizer.param_groups[0]['lr'] = 9
@@ -169,6 +176,70 @@ class PairedShadowTests(unittest.TestCase):
             torch.save(restored, legacy)
             namespace['load_training_checkpoint'](
                 legacy, model=model, optimizer_target=target_optimizer, optimizer_draft=self.optimizer)
+
+    def test_checkpoint_latest_falls_back_to_stream_copy_if_hardlinks_are_unavailable(self):
+        source = Path(__file__).resolve().parents[1] / 'grpo_speculative.py'
+        definition = next(node for node in ast.parse(source.read_text()).body
+                          if isinstance(node, ast.FunctionDef) and node.name == '_atomic_latest_checkpoint')
+        namespace = dict(os=os, shutil=shutil)
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), str(source), 'exec'), namespace)
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / 'target1.pt'
+            latest = Path(directory) / 'latest.pt'
+            checkpoint.write_bytes(b'checkpoint payload')
+            latest.write_bytes(b'previous payload')
+            with mock.patch.object(os, 'link', side_effect=OSError('no hardlink support')):
+                namespace['_atomic_latest_checkpoint'](checkpoint, latest)
+            self.assertEqual(latest.read_bytes(), checkpoint.read_bytes())
+            self.assertFalse((Path(directory) / 'latest.pt.tmp').exists())
+
+    def test_checkpoint_latest_discards_crash_leftover_hardlink_without_touching_old_step(self):
+        source = Path(__file__).resolve().parents[1] / 'grpo_speculative.py'
+        definition = next(node for node in ast.parse(source.read_text()).body
+                          if isinstance(node, ast.FunctionDef) and node.name == '_atomic_latest_checkpoint')
+        namespace = dict(os=os, shutil=shutil)
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), str(source), 'exec'), namespace)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old_step, new_step, latest = (root / name for name in
+                                          ('target1.pt', 'target2.pt', 'latest.pt'))
+            old_step.write_bytes(b'old valid checkpoint')
+            new_step.write_bytes(b'new valid checkpoint')
+            os.link(old_step, root / 'latest.pt.tmp')
+            with mock.patch.object(os, 'link', side_effect=OSError('no hardlink support')):
+                namespace['_atomic_latest_checkpoint'](new_step, latest)
+            self.assertEqual(old_step.read_bytes(), b'old valid checkpoint')
+            self.assertEqual(latest.read_bytes(), b'new valid checkpoint')
+
+    def test_existing_v5_run_accepts_only_pinned_memory_maintenance(self):
+        from policy_lag_analysis import atomic_json
+        source = Path(__file__).resolve().parents[1] / 'grpo_speculative.py'
+        tree = ast.parse(source.read_text())
+        definition = next(node for node in tree.body
+                          if isinstance(node, ast.FunctionDef) and node.name == '_accept_memory_maintenance_protocol')
+        old_hash = next(node.value.value for node in tree.body
+                        if isinstance(node, ast.Assign) and any(
+                            isinstance(target, ast.Name) and target.id == '_PRE_MEMORY_FIX_GRPO_SHA256'
+                            for target in node.targets))
+        namespace = dict(deepcopy=copy.deepcopy, atomic_json=atomic_json,
+                         _PRE_MEMORY_FIX_GRPO_SHA256=old_hash)
+        exec(compile(ast.Module(body=[definition], type_ignores=[]), str(source), 'exec'), namespace)
+        current = dict(format='fastgrpo_policy_lag_protocol_v5', target_lr=1e-6,
+                       source_sha256={'grpo_speculative.py': 'new_hash', 'helper/sampling.py': 'same_hash'})
+        previous = copy.deepcopy(current)
+        previous['source_sha256']['grpo_speculative.py'] = old_hash
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'protocol.json'
+            self.assertTrue(namespace['_accept_memory_maintenance_protocol'](path, previous, current))
+            self.assertEqual(json.loads(path.read_text()), current)
+            self.assertEqual(json.loads((path.parent / 'memory_maintenance.json').read_text())
+                             ['previous_source_sha256'], previous['source_sha256'])
+            incompatible = copy.deepcopy(previous)
+            incompatible['source_sha256']['helper/sampling.py'] = 'changed'
+            self.assertFalse(namespace['_accept_memory_maintenance_protocol'](path, incompatible, current))
+            incompatible = copy.deepcopy(previous)
+            incompatible['target_lr'] = 2e-6
+            self.assertFalse(namespace['_accept_memory_maintenance_protocol'](path, incompatible, current))
 
     def test_detects_optimizer_mutation_and_restores_stale_rng_on_error(self):
         initial = self.capture_rng()
