@@ -1,0 +1,15 @@
+{
+  "before_files": 428,
+  "after_files": 428,
+  "unchanged": false,
+  "changed": [
+    ".gitignore"
+  ],
+  "changed_hashes": {
+    ".gitignore": {
+      "before": "abb99ac880dfe0ea46cdbc1868da088d9aa1ea97ae2b2fe6d9f432f5c9f7a04d",
+      "after": "fc06960149c69c5131522693d104cc4fa78cef004f5b7c562cf876f96a002b76"
+    }
+  },
+  "runtime_sources_unchanged": true
+}

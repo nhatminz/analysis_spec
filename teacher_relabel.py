@@ -41,9 +41,9 @@ class CapturedSequence:
         if not torch.equal(self.attention_mask,torch.ones(l,dtype=torch.long)):raise ValueError('Captured unpadded context has gaps')
         expected=(torch.arange(l)>=self.prompt_length).long()
         if not torch.equal(self.loss_mask,expected):raise ValueError('Production loss mask differs')
-        if not self.loss_mask[:-1].any():
-            raise ValueError(f'{self.prompt_id}: no valid FastGRPO loss positions; generated history must contain >=3 tokens. '
-                             'The reference loss divides by this mask; refusing a nonfinite update.')
+        # Early EOS can legitimately leave no reference loss positions. Keep
+        # the exact context in the trace; the objective excludes this example
+        # from BOTH its numerator and normalization, identically for Fresh.
         return self
 
     def invariant(self):
@@ -169,6 +169,7 @@ class TeacherTrace:
                                 valid_slots=[[i for i in range(width) if past+i not in p] for p in padding]))
 
     def remove_row(self,index):self.events.append(dict(kind='remove_row',index=index))
+    def select_rows(self,indices):self.events.append(dict(kind='select_rows',indices=cpu_copy(indices)))
     def crop(self,length):self.events.append(dict(kind='crop',length=length))
     def select_suffix(self,prefix,indices):
         self.events.append(dict(kind='select_suffix',prefix=prefix,indices=cpu_copy(indices).to(torch.int32)))
@@ -221,6 +222,7 @@ class TeacherTrace:
                     selected=event['indices'][row,slots].to(device=device,dtype=torch.long)
                     histories[owner].append(hidden[row].index_select(0,selected).detach().cpu().clone())
                 hidden=None
+            elif kind=='select_rows':cache.batch_select_indices(event['indices'].to(device))
             elif kind=='remove_row':
                 i=event['index']
                 for layer in range(len(cache.key_cache)):

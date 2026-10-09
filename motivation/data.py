@@ -23,7 +23,7 @@ def question_hash(question):
     return hashlib.sha256(normalized_question(question).encode()).hexdigest()
 
 
-def extract_row(item, split, row):
+def extract_row(item, split, row,validate_answer=True):
     source=item.get('data_source')
     if source is not None and source not in ('simplelr','simplelr_abel','simplelr_abel_level3to5'):
         raise ValueError(f'{split} row {row}: data_source={source!r} is not SimpleLR')
@@ -56,15 +56,20 @@ def extract_row(item, split, row):
     answer = str(answer)
     if '####' in answer: answer = answer.split('####')[-1].strip()
     if '\\boxed{' not in answer: answer = f'\\boxed{{{answer}}}'
+    from helper.rewards import parse_gold_answer
+    if validate_answer:
+        try: parse_gold_answer(answer)
+        except ValueError as error: raise ValueError(f'{split} row {row}: {error}') from error
     return dict(id=f'{split}:{row}', split=split, row_id=row, source_id=str(item.get('unique_id', row)),
                 question=question, answer=answer, question_sha256=question_hash(question))
 
 
-def read_split(path, split):
+def read_split(path, split,invalid_answer_policy='exclude'):
     path = Path(path).expanduser().resolve(strict=True)
     if path.suffix != '.parquet': raise ValueError(f'SimpleLR {split} must be a Parquet file: {path}')
     table = pd.read_parquet(path)
-    rows = [extract_row(item, split, i) for i, item in enumerate(table.to_dict('records'))]
+    if invalid_answer_policy not in ('error','exclude'):raise ValueError('Invalid answer policy must be error or exclude')
+    rows = [extract_row(item, split, i,validate_answer=False) for i, item in enumerate(table.to_dict('records'))]
     seen, unique, duplicates = {}, [], []
     for row in rows:
         key = row['question_sha256']
@@ -74,7 +79,22 @@ def read_split(path, split):
                 raise ValueError(f'{split}: conflicting answers for duplicate questions {first["id"]}/{row["id"]}')
             duplicates.append(dict(kept=first['id'], removed=row['id'], question_sha256=key))
         else: seen[key] = row; unique.append(row)
-    info = dict(path=str(path), sha256=file_hash(path), raw_rows=len(rows), unique_rows=len(unique),
+    from helper.rewards import parse_gold_answer
+    import warnings
+    raw_unique=len(unique);all_hashes=[r['question_sha256'] for r in unique];valid=[];invalid=[];text_fallback=[]
+    for row in unique:
+        try:
+            parsed=parse_gold_answer(row['answer'])
+            if all(isinstance(x,str) for x in parsed):text_fallback.append(row['id'])
+            valid.append(row)
+        except ValueError as error:
+            if invalid_answer_policy=='error':raise ValueError(f'{row["id"]}: {error}') from error
+            invalid.append(dict(id=row['id'],answer=row['answer'],reason=str(error),question_sha256=row['question_sha256']))
+    if invalid:warnings.warn(f'{split}: excluding {len(invalid)} invalid gold labels: '+', '.join(r['id'] for r in invalid),RuntimeWarning)
+    unique=valid
+    info = dict(path=str(path), sha256=file_hash(path), raw_rows=len(rows), unique_rows=len(unique),raw_unique_rows=raw_unique,
+                invalid_answer_policy=invalid_answer_policy,invalid_answers=invalid,exact_text_gold_ids=text_fallback,
+                all_question_hashes=all_hashes,
                 schema={k: str(v) for k, v in table.dtypes.items()}, duplicates=duplicates,
                 rows=[{k: r[k] for k in ('id','row_id','source_id','question_sha256')} for r in unique])
     return unique, info
@@ -95,11 +115,11 @@ def tokenize(rows, tokenizer):
                      add_special_tokens=False)
 
 
-def prepare(train_path, test_path, output_dir, tokenizer, subset_seed=2026):
-    train, train_info = read_split(train_path, 'train')
-    test, test_info = read_split(test_path, 'test')
+def prepare(train_path, test_path, output_dir, tokenizer, subset_seed=2026,invalid_answer_policy='exclude'):
+    train, train_info = read_split(train_path, 'train',invalid_answer_policy)
+    test, test_info = read_split(test_path, 'test',invalid_answer_policy)
     if train_info['path'] == test_info['path']: raise ValueError('Train and test must be separate official files')
-    overlap = {r['question_sha256'] for r in train} & {r['question_sha256'] for r in test}
+    overlap = set(train_info['all_question_hashes']) & set(test_info['all_question_hashes'])
     if overlap:
         examples = [r['id'] for r in test if r['question_sha256'] in overlap][:10]
         raise ValueError(f'Train/test normalized-question leakage: {len(overlap)} questions, test IDs {examples}. '

@@ -1,0 +1,27 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/434 [00:00<?, ?it/s]Loading weights: 100%|██████████| 434/434 [00:00<00:00, 10019.58it/s]
+{
+  "loss_a": {
+    "feature_loss": 2.8279383182525635,
+    "distribution_loss": 0.8446800112724304,
+    "gradient_sha256": "d78eeadb93e75144bd0d18ee8f3720e8645705f983532001664d950a61e37e7a",
+    "optimizer_steps": 1,
+    "projector_gradient_norm": null,
+    "valid_examples": 2,
+    "empty_examples": 0,
+    "supervised_tokens": 16
+  },
+  "loss_b": {
+    "feature_loss": 2.8279383182525635,
+    "distribution_loss": 0.8446800112724304,
+    "gradient_sha256": "d78eeadb93e75144bd0d18ee8f3720e8645705f983532001664d950a61e37e7a",
+    "optimizer_steps": 1,
+    "projector_gradient_norm": null,
+    "valid_examples": 2,
+    "empty_examples": 0,
+    "supervised_tokens": 16
+  },
+  "weights_identical": true,
+  "optimizer_identical": true,
+  "gradient_differences": []
+}

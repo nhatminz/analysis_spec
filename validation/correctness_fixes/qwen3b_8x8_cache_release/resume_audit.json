@@ -1,0 +1,19 @@
+{
+  "completed_analysis_steps": [
+    1
+  ],
+  "policy_step": 1,
+  "rollout_attempt": 1,
+  "state_identity_passed": true,
+  "verified_fields": [
+    "optimizer_target",
+    "projector_pending_sum",
+    "projector_pending_weight",
+    "reflex",
+    "rng",
+    "sampler",
+    "shadow",
+    "target_gradients",
+    "target_lora"
+  ]
+}

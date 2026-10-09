@@ -1,0 +1,4 @@
+{
+  "durable_checkpoint": true,
+  "policy_step": 1
+}

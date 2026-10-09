@@ -1,0 +1,84 @@
+{
+  "status": "LOCAL_8X8_PASS_B200_UNVERIFIED",
+  "production_ready_verified": false,
+  "edited_code_scope": "analysis_spec",
+  "tests": {
+    "cuda": {
+      "passed": 340,
+      "warnings": 85,
+      "seconds": 23.52,
+      "log": "validation/correctness_fixes/cuda_tests_final.log"
+    },
+    "cpu": {
+      "passed": 100,
+      "skipped": 213,
+      "warnings": 1,
+      "seconds": 4.37,
+      "log": "validation/correctness_fixes/cpu_tests_final.log"
+    }
+  },
+  "integration": {
+    "b200_execution_verified": false,
+    "device": "NVIDIA GeForce RTX 3090",
+    "draft_checkpoint": "/mnt/hdd/nhatminh/.specnaacl-validation/qwen3b-modern/checkpoints/smoke-latest/draft.pth",
+    "draft_sha256": "ddadc931fcafe9caeb45ddcc428d8e0912d6aa59a62fe8bc0cfe7c6f8830b278",
+    "errors": [],
+    "eval_max_new_tokens": 256,
+    "evaluation_peak_cuda_allocated_bytes": 11694345728,
+    "evaluation_responses": 96,
+    "measurement_boundaries": 1,
+    "projector_pretrained": false,
+    "real_target_updates": 1,
+    "responses_per_prompt": 8,
+    "status": "PASS",
+    "train_max_length": 2048,
+    "train_prompts": 8,
+    "training_peak_cuda_allocated_bytes": 20017797120,
+    "checkpoint_kind": "existing two-step pretrain validation artifact; not production pretrained draft",
+    "research_result": false,
+    "actual_natural_rewards": true,
+    "gradient_norm": 0.06630264967679977,
+    "target_old_sha256": "6a9fa122ef20f29542a120a897d24c3f1d8f56223cbb27ed37d834e8049339dc",
+    "target_new_sha256": "8d93a9b8e014fb20357ed1956510ff4264d53627ec46f51424670f356e8ac062",
+    "policy_tv_mean": 4.624655451834769e-05,
+    "policy_tv_max": 0.00034257047809660435,
+    "main_generated_tokens": 28895,
+    "shadow_generated_tokens": 30340,
+    "A_gradient_norm": 0.8730984926223755,
+    "A_parameters_changed": true,
+    "A_frozen_across_four_conditions": true,
+    "old_teacher_hidden_max_error": 0.0,
+    "old_teacher_distribution_tv_max": 0.0,
+    "isolated_control_passed": true,
+    "isolated_control_bitwise": false,
+    "resume_exact_state_identity": true,
+    "implementation_matches_run_manifest": true,
+    "sampled_whole_device_peak_mib": 21045,
+    "checkpoint_bytes": 3985982810,
+    "teacher_trace_bytes": 869280145,
+    "wall_seconds_including_commit": 2310.387824253179,
+    "output_dir": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/correctness_fixes/qwen3b_8x8_cache_release"
+  },
+  "reference_audit": {
+    "before_files": 428,
+    "after_files": 428,
+    "unchanged": false,
+    "changed": [
+      ".gitignore"
+    ],
+    "changed_hashes": {
+      ".gitignore": {
+        "before": "abb99ac880dfe0ea46cdbc1868da088d9aa1ea97ae2b2fe6d9f432f5c9f7a04d",
+        "after": "fc06960149c69c5131522693d104cc4fa78cef004f5b7c562cf876f96a002b76"
+      }
+    },
+    "runtime_sources_unchanged": true
+  },
+  "blockers": [
+    "No NVIDIA B200 is available on this host (RTX 3090 only); no B200 access/host was supplied.",
+    "The actual production pretrained draft on B200 is not present locally and its absolute B200 path was not supplied.",
+    "The local torch 2.6.0+cu124 build does not support sm_100; B200 requires a compatible CUDA >=12.8 build."
+  ],
+  "launch": "Set absolute MODEL, DRAFT_CHECKPOINT, TRAIN_DATASET_PATH, TEST_DATASET_PATH and PYTHON_BIN, then bash analysis_spec/scripts/validate_b200.sh",
+  "report": "analysis_spec/CORRECTNESS_VALIDATION.md"
+}

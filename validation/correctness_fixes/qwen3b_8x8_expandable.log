@@ -1,0 +1,28 @@
+/mnt/hdd/nhatminh/SpecDecode/analysis_spec/motivation/data.py:93: RuntimeWarning: train: excluding 2 invalid gold labels: train:5054, train:5158
+  if invalid:warnings.warn(f'{split}: excluding {len(invalid)} invalid gold labels: '+', '.join(r['id'] for r in invalid),RuntimeWarning)
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/434 [00:00<?, ?it/s]Loading weights: 100%|██████████| 434/434 [00:00<00:00, 10442.57it/s]
+/mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_reflex.py:180: UserWarning: No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.
+  warnings.warn('No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.')
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 151936
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/run_policy_lag_motivation.py", line 135, in main
+    result=run(config,train,heldout,tokenizer,manifest,args.resume)
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/motivation/runner.py", line 108, in run
+    out_s=rollout(s,batch,tokenizer,config,'fastgrpo',generation_seed(config.seed,attempt,'shadow_training'),teacher_trace=teacher_trace)
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/motivation/runtime.py", line 98, in rollout
+    out=speculative_generate(model=model,input_ids=batch['input_ids'],attention_mask=batch['attention_mask'],
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/specualtive_generate.py", line 13, in speculative_generate
+    return generate(*args, **kwargs)
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/fastgrpo_generate.py", line 714, in speculative_generate
+    target_next_token_tree=sampling(target_outputs_logits,top_k,top_p,temperature,eos_token_id)
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/fastgrpo_generate.py", line 92, in sampling
+    sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 808.00 MiB. GPU 0 has a total capacity of 23.59 GiB of which 775.94 MiB is free. Including non-PyTorch memory, this process has 22.77 GiB memory in use. Of the allocated memory 22.28 GiB is allocated by PyTorch, and 163.07 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

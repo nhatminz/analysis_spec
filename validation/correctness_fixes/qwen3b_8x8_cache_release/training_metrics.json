@@ -1,0 +1,145 @@
+[
+  {
+    "all_reward_groups_excluded": false,
+    "main_grpo_buffer_sha256": "9a05f1f81ba462ac7898161c3324c85b80711c61f249e1292b329521f1d4f1df",
+    "peak_training_cuda_allocated_bytes": 20017797120,
+    "policy_step": 1,
+    "prompt_ids": [
+      "train:2957",
+      "train:7509",
+      "train:8012",
+      "train:1447",
+      "train:6785",
+      "train:2539",
+      "train:6736",
+      "train:2600"
+    ],
+    "reflex_loss": {
+      "distribution_loss": 0.7656236300244927,
+      "empty_examples": 0,
+      "feature_loss": 2.5382243990898132,
+      "gradient_sha256": "a5f99f4f4e37eee1cd8dd91aa5fd38ab97d8e5237c8364c74304aacfe08654c7",
+      "optimizer_steps": 1,
+      "projector_gradient_norm": 0.8730984926223755,
+      "supervised_tokens": 28767,
+      "valid_examples": 64
+    },
+    "rewards": [
+      [
+        1.2,
+        0.2,
+        0.2,
+        0.2,
+        1.2,
+        0.2,
+        0.2,
+        0.2
+      ],
+      [
+        0.2,
+        0.2,
+        0.2,
+        0.0,
+        0.2,
+        0.2,
+        0.2,
+        0.0
+      ],
+      [
+        1.0,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        1.0,
+        0.2
+      ],
+      [
+        0.2,
+        1.0,
+        0.0,
+        1.2,
+        1.2,
+        1.0,
+        1.0,
+        0.0
+      ],
+      [
+        1.0,
+        0.2,
+        0.2,
+        0.2,
+        0.0,
+        0.2,
+        0.2,
+        0.2
+      ],
+      [
+        0.0,
+        0.0,
+        0.2,
+        0.2,
+        1.0,
+        0.2,
+        0.2,
+        0.0
+      ],
+      [
+        0.2,
+        1.0,
+        1.0,
+        1.2,
+        1.0,
+        1.2,
+        1.2,
+        1.0
+      ],
+      [
+        0.0,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.2
+      ]
+    ],
+    "rollout_attempt": 1,
+    "rollout_counters": {
+      "reflex": {
+        "accepted_length_sum": 28831,
+        "generated_tokens": 28895,
+        "responses": 64,
+        "verification_rounds": 23779
+      },
+      "shadow": {
+        "accepted_length_sum": 30276,
+        "generated_tokens": 30340,
+        "responses": 64,
+        "verification_rounds": 24787
+      }
+    },
+    "shadow_loss": {
+      "distribution_loss": 0.7622945951297879,
+      "empty_examples": 0,
+      "feature_loss": 2.520893882960081,
+      "gradient_sha256": "2931e6b37c723c92625251dfb4c11de3af0a2098c1a23d0982bda2e528b6060c",
+      "optimizer_steps": 1,
+      "projector_gradient_norm": null,
+      "supervised_tokens": 30212,
+      "valid_examples": 64
+    },
+    "target_gradient_norm": 0.06630264967679977,
+    "target_loss": -7.2177499532699585e-09,
+    "target_new_sha256": "8d93a9b8e014fb20357ed1956510ff4264d53627ec46f51424670f356e8ac062",
+    "target_old_sha256": "6a9fa122ef20f29542a120a897d24c3f1d8f56223cbb27ed37d834e8049339dc",
+    "target_optimizer_steps": 1,
+    "target_skip_reason": null,
+    "target_trajectories": 64,
+    "train_response_count_per_learner": 64,
+    "transition_kind": "genuine_target_update",
+    "zero_drift": false
+  }
+]

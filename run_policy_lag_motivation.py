@@ -19,12 +19,18 @@ def parser():
         p.add_argument('--'+name,default=None)
     for name in ('train-steps','seed','eval-subset-seed','eval-max-new-tokens','bootstrap-samples','accumulation-steps',
                  'draft-accumulation-steps','batch-size','responses-per-prompt','max-length','max-prompt-length',
-                 'max-training-token','max-training-padding-gap','smoke-eval-prompts','save-every'):
+                 'max-training-token','max-training-padding-gap','smoke-eval-prompts','save-every','max-attempts-per-step','draft-ce-chunk-size'):
         p.add_argument('--'+name,type=int,default=None)
     for name in ('target-lr','draft-lr','opd-projector-lr','opd-fast-lr','replay-hidden-atol','replay-hidden-rtol','replay-distribution-tv'):
         p.add_argument('--'+name,type=float,default=None)
     for name in ('eval-steps','confirmation-steps','zero-update-steps'):
         p.add_argument('--'+name,default=None,help='Comma separated completed target optimizer steps; empty string disables')
+    p.add_argument('--zero-drift-control-steps',dest='zero_update_steps',default=None,
+                   help='Isolated shadow placebo checks; does not replace target updates (--zero-update-steps is the legacy alias)')
+    p.add_argument('--require-b200',action='store_true',default=None,help='Fail unless the installed GPU/build supports B200')
+    p.add_argument('--validation-run',action='store_true',default=None,help='Mark execution validation as nonpublishable; preserve 8x8 training and 16/64 evaluation')
+    p.add_argument('--target-gradient-checkpointing',action=argparse.BooleanOptionalAction,default=None)
+    p.add_argument('--invalid-answer-policy',choices=['error','exclude'],default=None)
     p.add_argument('--resume',default='',help='auto or an explicit experiment checkpoint')
     p.add_argument('--smoke',action='store_true',help='2 steps, 2 held-out prompts; explicitly nonpublishable')
     return p
@@ -91,29 +97,32 @@ def main(argv=None):
     os.environ['OPD_PROPOSAL_PROFILE']=config.opd_proposal_profile
     from transformers import AutoTokenizer
     from motivation.data import prepare
-    from motivation.compatibility import model_identity,validate_draft,validate_tokenizer,tokenizer_identity
+    from motivation.compatibility import model_identity,validate_draft,validate_tokenizer,tokenizer_identity,validate_cuda_runtime
     from motivation.state import atomic_json,file_hash
     tokenizer=AutoTokenizer.from_pretrained(config.model,padding_side='left',local_files_only=True)
     model=model_identity(config.model);validate_tokenizer(tokenizer,model['config'])
     analysis=Path(config.output_dir)/'analysis'
-    train,heldout,data_manifest=prepare(config.train_path,config.test_path,analysis,tokenizer,config.eval_subset_seed)
+    train,heldout,data_manifest=prepare(config.train_path,config.test_path,analysis,tokenizer,config.eval_subset_seed,config.invalid_answer_policy)
     if args.mode=='prepare':
         print(json.dumps(dict(train_unique=len(train),test_unique=data_manifest['test']['unique_rows'],subset=64,
                               manifest=str(analysis/'eval_subset_manifest.json')),indent=2));return 0
     draft=validate_draft(config.draft_checkpoint,config.model,config.draft_target_config)
     config.draft_checkpoint=draft['path']
+    if draft.get('projector_pretrained') and draft['projector_rank']!=config.opd_rank:
+        raise ValueError('Pretrained Reflex A rank differs from configured opd_rank')
     implementation={str(p.relative_to(ROOT)):file_hash(p) for directory in ('helper','motivation') for p in sorted((ROOT/directory).glob('*.py'))}
     for name in ('teacher_relabel.py','run_policy_lag_motivation.py','PORT_SOURCES.json'):
         implementation[name]=file_hash(ROOT/name)
     import platform,torch,transformers,peft
     runtime=dict(python=platform.python_version(),torch=torch.__version__,transformers=transformers.__version__,peft=peft.__version__,
                  cuda=torch.version.cuda,gpu=torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)
+    if args.mode=='run' or config.require_b200:runtime.update(validate_cuda_runtime(config.require_b200))
     target_adapter_hashes={str(p.relative_to(config.target_adapter)):file_hash(p) for p in sorted(Path(config.target_adapter).rglob('*')) if p.is_file()} if config.target_adapter else {}
     profile_hash=file_hash(config.opd_proposal_profile) if config.opd_proposal_profile else None
-    manifest=dict(runtime=runtime,target_adapter_sha256=target_adapter_hashes,opd_profile_sha256=profile_hash,format='simplelr_opd_policy_lag_a1a2_v1',config=config.to_dict(),model=model,draft=draft,
+    manifest=dict(runtime=runtime,target_adapter_sha256=target_adapter_hashes,opd_profile_sha256=profile_hash,format='simplelr_opd_policy_lag_a1a2_v2',config=config.to_dict(),model=model,draft=draft,
                   tokenizer_files=tokenizer_identity(config.model),data=data_manifest,implementation_sha256=implementation,
                   target_trajectory='OPD-driven',reference_variant='Qwen2.5-3B-Instruct',
-                  reference_target_accumulation=4,experiment_target_accumulation=1,research_result=not config.smoke,
+                  reference_target_accumulation=4,experiment_target_accumulation=1,research_result=not(config.smoke or config.validation_run),
                   eval_conditions=6,eval_response_count_per_prompt=1,
                   teacher_distribution='full softmax frozen shared head (distinct from OPD truncated sampler teacher)')
     path=analysis/'manifest.json'

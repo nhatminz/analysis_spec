@@ -62,6 +62,12 @@ class Config:
     smoke: bool = False
     smoke_eval_prompts: int = 2
     save_every: int = 1
+    max_attempts_per_step: int = 32
+    target_gradient_checkpointing: bool = True
+    draft_ce_chunk_size: int = 128
+    require_b200: bool = False
+    invalid_answer_policy: str = 'exclude'
+    validation_run: bool = False
 
     def validate(self):
         if self.accumulation_steps != 1 or self.draft_accumulation_steps != 1 or self.grpo_iteration_num != 1:
@@ -70,6 +76,8 @@ class Config:
             raise ValueError('Production requires 8 distinct train prompts x 8 responses per learner')
         if self.smoke and self.smoke_eval_prompts not in (2,3,4): raise ValueError('Smoke uses 2-4 test prompts')
         if self.train_steps < 1 or self.save_every < 1: raise ValueError('train_steps/save_every must be positive')
+        if self.max_attempts_per_step<1 or self.draft_ce_chunk_size<1:raise ValueError('Positive retry/CE chunk budgets required')
+        if self.invalid_answer_policy not in ('error','exclude'):raise ValueError('invalid_answer_policy must be error or exclude')
         if len(set(self.eval_steps)) != len(self.eval_steps): raise ValueError('Duplicate eval steps')
         for name in ('eval_steps','confirmation_steps','zero_update_steps'):
             values = getattr(self,name)

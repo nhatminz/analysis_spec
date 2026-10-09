@@ -1,5 +1,7 @@
 # Implementation and validation, 2026-10-09
 
+**Historical initial-port report.** Current correctness fixes, target-step semantics, test counts and hardware/checkpoint blockers are in [CORRECTNESS_VALIDATION.md](CORRECTNESS_VALIDATION.md). The reduced zero-update pilot below does not validate a genuine production target update or B200 execution.
+
 The active experiment is rebuilt entirely inside `analysis_spec`. Every edit made by this implementation is inside that directory. There is no runtime import, symlink or PYTHONPATH dependency on `SpecNaacl`. A user-supplied pretrained checkpoint is read as input data.
 
 Reference integrity matched the before-edit snapshot through the final pilot launch. A later audit observed concurrent external changes to `SpecNaacl/grpo_speculative.py` and the addition of `helper/response_alignment.py` and `helper/shared_adapter.py` (timestamps 15:55–15:56 local time). Those files were only read by this implementation and were preserved. Before/after hashes are in [validation/reference_concurrent_changes.json](validation/reference_concurrent_changes.json). Port provenance remains pinned to the audited original snapshot; none of the copied runtime kernels changed in that reference update. The whole-reference audit correctly reports this difference instead of overwriting its baseline.

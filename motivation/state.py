@@ -44,6 +44,52 @@ def digest(value):
     return h.hexdigest()
 
 
+def compare_training_values(actual,expected):
+    """Check placebo updates at storage precision; freeze/resume use digests.
+
+    Long CUDA SDPA backward has reduction-order noise. Require both maximum
+    absolute error and relative tensor L2 error within one dtype epsilon
+    (3e-6 for FP32), rather than treating any changed gradient hash as failure.
+    Counters, structure, dtypes and nonfloating values still match exactly.
+    """
+    import math
+    report=dict(passed=True,bitwise_equal=True,max_abs_error=0.,max_relative_l2_error=0.,
+                max_tolerance_fraction=0.,different_tensors=0,failed_paths=[])
+    def fail(path):
+        report['passed']=False;report['bitwise_equal']=False
+        if len(report['failed_paths'])<16:report['failed_paths'].append(path)
+    def visit(a,b,path):
+        if torch.is_tensor(a) and torch.is_tensor(b):
+            if a.shape!=b.shape or a.dtype!=b.dtype:fail(path);return
+            a=a.detach().cpu();b=b.detach().cpu()
+            if torch.equal(a,b):return
+            report['bitwise_equal']=False;report['different_tensors']+=1
+            if not a.is_floating_point() or not torch.isfinite(a).all() or not torch.isfinite(b).all():fail(path);return
+            delta=(a.float()-b.float());maximum=float(delta.abs().max())
+            tolerance=max(3e-6,torch.finfo(a.dtype).eps)
+            reference_norm=float(b.float().norm());error_norm=float(delta.norm())
+            scale=float(b.float().abs().max());absolute_bound=1e-12+tolerance*scale
+            norm_bound=1e-12+tolerance*reference_norm
+            fraction=max(maximum/absolute_bound,error_norm/norm_bound)
+            report['max_abs_error']=max(report['max_abs_error'],maximum)
+            report['max_relative_l2_error']=max(report['max_relative_l2_error'],error_norm/max(reference_norm,1e-30))
+            report['max_tolerance_fraction']=max(report['max_tolerance_fraction'],fraction)
+            if not math.isfinite(fraction) or fraction>1:fail(path)
+        elif torch.is_tensor(a) or torch.is_tensor(b):fail(path)
+        elif isinstance(a,Mapping) and isinstance(b,Mapping):
+            if a.keys()!=b.keys():fail(path);return
+            for key in a:visit(a[key],b[key],path+'.'+str(key))
+        elif isinstance(a,(tuple,list)) and isinstance(b,(tuple,list)):
+            if len(a)!=len(b):fail(path);return
+            for i,(x,y) in enumerate(zip(a,b)):visit(x,y,path+'.'+str(i))
+        elif isinstance(a,float) and isinstance(b,float):
+            if a!=b:report['bitwise_equal']=False
+            if not math.isfinite(a) or not math.isfinite(b) or not math.isclose(a,b,rel_tol=3e-6,abs_tol=1e-12):fail(path)
+        elif a!=b:report['bitwise_equal']=False;fail(path)
+    visit(actual,expected,'root')
+    return report
+
+
 def file_hash(path):
     h = hashlib.sha256()
     with open(path, 'rb') as f:

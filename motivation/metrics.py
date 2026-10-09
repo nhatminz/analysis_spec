@@ -13,8 +13,9 @@ EFFECTS = ('A1_delta_lag','A2_gain_old','A2_gain_new','A2_drift_interaction')
 def aal(rows):
     numerator = sum(r['accepted_draft_length_sum'] for r in rows)
     denominator = sum(r['verification_rounds'] for r in rows)
-    if denominator <= 0 or any(r['verification_rounds'] <= 0 for r in rows):
-        raise ValueError('AAL requires a positive actual verification denominator for every response')
+    if denominator <= 0 or any(r['verification_rounds']<0 or r['accepted_draft_length_sum']<r['verification_rounds'] or
+                               (r['verification_rounds']==0 and r['accepted_draft_length_sum']!=0) for r in rows):
+        raise ValueError('AAL requires valid counters and a positive aggregate verification denominator')
     return numerator / denominator
 
 
@@ -47,16 +48,25 @@ def summarize(rows, step, n, seed=2026, samples=2000):
         metric[name+'_aal']=values[c]
         metric[name+'_accepted_length_sum']=sum(r['accepted_draft_length_sum'] for r in g)
         metric[name+'_verification_rounds']=sum(r['verification_rounds'] for r in g)
+        metric[name+'_zero_round_responses']=sum(r['verification_rounds']==0 for r in g)
     arrays={c:np.array([[r['accepted_draft_length_sum'],r['verification_rounds']] for r in g],dtype=np.float64)
             for c,g in ordered.items()}
     rng=np.random.default_rng(seed);draws={name:[] for name in EFFECTS}
+    undefined=0
     for _ in range(samples):
         chosen=rng.integers(0,n,n)  # SAME prompt ID resampled across all conditions
+        if any(a[chosen,1].sum()==0 for a in arrays.values()):
+            undefined+=1;continue
         ratios={c:(a[chosen,0].sum()/a[chosen,1].sum()) for c,a in arrays.items()}
         for name,value in effects(ratios).items():draws[name].append(value)
     for name in EFFECTS:
-        lo,hi=np.quantile(draws[name],[.025,.975])
-        metric[name+'_ci_low']=float(lo);metric[name+'_ci_high']=float(hi)
+        # Conditioning the bootstrap on defined ratios would change its
+        # estimand. Report undefined intervals instead of silently discarding.
+        lo,hi=np.quantile(draws[name],[.025,.975]) if undefined==0 else (None,None)
+        metric[name+'_ci_low']=float(lo) if lo is not None else None
+        metric[name+'_ci_high']=float(hi) if hi is not None else None
+    metric['bootstrap_undefined_replicates']=undefined
+    metric['bootstrap_replicates']=samples
     return metric
 
 
@@ -99,8 +109,8 @@ def replot(output_dir):
             selected=[r for r in metrics if r['eval_prompts']==n]
             if not selected:continue
             x=[r['policy_step'] for r in selected];y=[r[name] for r in selected]
-            ax.errorbar(x,y,yerr=[[max(0.,r[name]-r[name+'_ci_low']) for r in selected],
-                                   [max(0.,r[name+'_ci_high']-r[name]) for r in selected]],fmt=marker,
+            ax.errorbar(x,y,yerr=[[max(0.,r[name]-r[name+'_ci_low']) if r[name+'_ci_low'] is not None else 0. for r in selected],
+                                   [max(0.,r[name+'_ci_high']-r[name]) if r[name+'_ci_high'] is not None else 0. for r in selected]],fmt=marker,
                         label=f'N={n}, '+('confirmation' if n==64 else ('exploratory' if n==16 else 'smoke')))
         ax.axhline(0,color='gray',lw=.8);ax.set(xlabel='Completed target optimizer steps',ylabel=name+' (length-capped AAL)')
         ax.legend();fig.tight_layout();fig.savefig(plot_dir/(name+'.png'),dpi=180);plt.close(fig)

@@ -10,7 +10,7 @@ The MIT notices in `LICENSE` and `sources/FastGRPO/LICENSE` are preserved. The o
 
 `train_qwen25_3b.sh` → `scripts/launch/train_model.sh` → shared/3B env → model/tokenizer, LoRA, draft and optimizer creation in `grpo_speculative.py` → `specualtive_generate` dispatch → baseline `fastgrpo_generate` or `opd_generate` → DraftModel/cache/tree/sampler/verification/history → `fastgrpo_training.training_draft_model`, analytical projector gradient application, AdamW draft boundary → `compute_target_loss` and target AdamW boundary → checkpoint state. The reference's existing policy-lag branch regenerates Fresh rollouts; it was audited but was NOT ported as the new A1 protocol.
 
-Also traced: `METHOD_OPD_REFLEX.md`, `FASTGRPO_REWRITE.md`, data loaders/collators, rewards, model-loading and pretraining export, dynamic/static KV APIs, attention masks, finite/strict sampler, one-hop frontier selection, coarsened KL union/tail, projected proposal correction, async feedback ordering, optimizer groups, source parity and integration tests. The source math prompt and reward functions are preserved. The upstream target trainer's decode/retokenize path and separately sorted reward arrays are replaced by records carrying actual accepted token IDs with their own aligned rewards/masks.
+Also traced: `METHOD_OPD_REFLEX.md`, `FASTGRPO_REWRITE.md`, data loaders/collators, rewards, model-loading and pretraining export, dynamic/static KV APIs, attention masks, finite/strict sampler, one-hop frontier selection, coarsened KL union/tail, projected proposal correction, async feedback ordering, optimizer groups, source parity and integration tests. The source math prompt is preserved. Gold parsing now rejects empty/unparseable labels rather than awarding reward 1; nonempty exact-text fallback is explicitly recorded. The upstream target trainer's decode/retokenize path and separately sorted reward arrays are replaced by records carrying actual accepted token IDs with their own aligned rewards/masks.
 
 The old destination audit covered its `grpo_speculative.py`, `policy_lag_analysis.py`, protocol helper, LK/ReflexV5 kernels, EAGLE3/SpecForge model/supervision path, rollout merge, DAPO preparation, launchers, V5 docs and their transitive imports/tests. Those active algorithms/tests/docs are removed or rewritten. Necessary unrelated SpecForge pretraining tooling was moved intact into `legacy_pretraining/`; production `train_draft.py` is ported for future compatible FastGRPO pretraining. Old experiment names only forward to the new launcher. Legacy args and model-family mismatch fail rather than selecting another algorithm.
 
@@ -38,16 +38,16 @@ The SHA256 column is the original source hash. Destination hashes and exact exce
 | `helper/opd_attention_kernels.py` | `helper/opd_attention_kernels.py` | `afefad13dead7020885843ccde9aec84e509b7696e27cb115629000ee0b7089f` | none |
 | `helper/pretrain_data.py` | `helper/pretrain_data.py` | `181e4dfb791d6cbd8125aaf4ace3a02f1654e116e2203d05cf7531e7d5e7af08` | none |
 | `helper/opd_static_cache.py` | `helper/opd_static_cache.py` | `3d048c93cd70a0556acdf522df5cb55a2d050b226853e0456bc73f568ff64d98` | none |
-| `helper/rewards.py` | `helper/rewards.py` | `4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30` | none |
+| `helper/rewards.py` | `helper/rewards.py` | `4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30` | Remove unparseable-gold reward=1; validate/cached gold parsing and explicit numeric LaTeX grouping normalization |
 | `helper/__init__.py` | `helper/__init__.py` | `13a9095f8cbb5cab149c508822e2a5021dd033f3e4e3665c44d89fc70abd90cb` | none |
 | `helper/opd_profiles.py` | `helper/opd_profiles.py` | `feacabb631e3ee1a87d4fde179ab64e9ad4308465e28e47b34b2ffb2d5092a1c` | none |
 | `helper/opd_reflex_kernels.py` | `helper/opd_reflex_kernels.py` | `65fdb32878ec1aec9b3c4c83a105d9f938f7d9512aceed37ed8e2bfefd01259b` | none |
 | `helper/tree_verification.py` | `helper/tree_verification.py` | `70abc46dd67af397d8288695f992b97d819cf29b73409c9dfdd333e39adeec29` | none |
 | `helper/shared_rollout.py` | `helper/shared_rollout.py` | `8ec3ba1c4ff27d4f5b32ba7cdc1a97cbd7a3cb58cf0be3ad8c06fcae9eba38d8` | none |
-| `helper/fastgrpo_generate.py` | `helper/fastgrpo_generate.py` | `dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93` | Opt-in exact single-response evaluation cap and compact teacher-call/KV trace; default arithmetic unchanged |
+| `helper/fastgrpo_generate.py` | `helper/fastgrpo_generate.py` | `dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93` | Opt-in exact evaluation cap and compact teacher trace; fix prefill EOS termination/row compaction, unchanged non-EOS tree arithmetic |
 | `helper/modeling_draft.py` | `helper/modeling_draft.py` | `5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4` | none |
-| `helper/fastgrpo_training.py` | `helper/fastgrpo_training.py` | `bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359` | none |
-| `helper/opd_generate.py` | `helper/opd_generate.py` | `d078ad2b23680c83a18e3cbb35ff7c4b2071a7577ed9404b8c9413a4d69da806` | Opt-in single-response exact evaluation cap before feedback/counters; default arithmetic unchanged |
+| `helper/fastgrpo_training.py` | `helper/fastgrpo_training.py` | `bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359` | Correct padded last-token mask and empty-example normalization; stable chunked soft CE/GRPO logps, uniform final-microbatch accumulation |
+| `helper/opd_generate.py` | `helper/opd_generate.py` | `d078ad2b23680c83a18e3cbb35ff7c4b2071a7577ed9404b8c9413a4d69da806` | Opt-in exact evaluation cap; fix prefill EOS termination/row compaction, unchanged proposal/feedback kernels |
 | `helper/opd_reflex.py` | `helper/opd_reflex.py` | `cb6041e45aa10109d4280c93f03ffe27fdaac334d2854b23ea4e25a49917e07a` | none |
 | `helper/environment_checks.py` | `helper/environment_checks.py` | `b1406dc5575937b3084ca85f993a8f8dbd483d3256f1aefd25fb8008decbe635` | none |
 | `helper/transformers_compat.py` | `helper/transformers_compat.py` | `d373f2043f39ca5d7fe990e365a9c17a7ab5d29720b6c113c61cd0b1baa78b3c` | none |
@@ -69,7 +69,7 @@ The SHA256 column is the original source hash. Destination hashes and exact exce
 | `scripts/resolve_opd_profile.py` | `scripts/resolve_opd_profile.py` | `57b148eae2f2f0b2a4e4cb632c08075a8fc590759ee7a439d049e5a3a4403399` | none |
 | `tests/test_opd_memory_revision.py` | `tests/test_opd_memory_revision.py` | `d4ac0ab1287008789b5a718ab4c0ffe0fe2e45454869cbb6a19c70cebcffdae8` | none |
 | `tests/test_opd_last_three.py` | `tests/test_opd_last_three.py` | `c020c3b62514a7fb4ef1e15ab70b046dc7c7182cd35ad0eaa85c4a7f333a4bca` | none |
-| `tests/test_fastgrpo_rewrite.py` | `tests/test_fastgrpo_rewrite.py` | `b18939043b4c427bf92b68f192d04cc0042e9a46a7405715eb9b9d26f3fdec80` | none |
+| `tests/test_fastgrpo_rewrite.py` | `tests/test_fastgrpo_rewrite.py` | `b18939043b4c427bf92b68f192d04cc0042e9a46a7405715eb9b9d26f3fdec80` | Preserve valid upstream objective parity case; independent tests expose/fix padding and final accumulation defects |
 | `tests/test_opd_sampling_finite.py` | `tests/test_opd_sampling_finite.py` | `1a06c2f51ba445cdf8f2ded5e4fb8a3c931703cf6ec1bf9fc230d6eab8593171` | none |
 | `tests/test_opd_reflex.py` | `tests/test_opd_reflex.py` | `164cd6e779bd81aa10541709c0626be2984f982ceb4dca9f662d27e270eb3381` | none |
 | `tests/test_checkpointing.py` | `tests/test_checkpointing.py` | `d7530ab8d5785c430c1572e6b9e286765ea0f4803db525ff6c9d1b91346b828e` | none |
@@ -80,9 +80,9 @@ The SHA256 column is the original source hash. Destination hashes and exact exce
 
 ## New protocol files
 
-`run_policy_lag_motivation.py`, `run_policy_lag_motivation.sh`, `configs/qwen25_3b/simplelr_a1_a2.json`, `teacher_relabel.py`, `motivation/{config,data,state,compatibility,runtime,runner,metrics}.py`, `tests/test_motivation_*.py`, `tests/test_teacher_relabel.py`, `scripts/audit_port.py`, `DESIGN_A1_A2.md`, README and validation/report artifacts. `grpo_speculative.py`, `policy_lag_analysis.py` and retained old launcher names are small compatibility forwarders, not parallel algorithms.
+`run_policy_lag_motivation.py`, `run_policy_lag_motivation.sh`, `configs/qwen25_3b/simplelr_a1_a2.json`, `teacher_relabel.py`, `motivation/{config,data,state,compatibility,runtime,runner,metrics}.py`, `helper/generation_edges.py`, `tests/test_motivation_*.py`, `tests/test_teacher_relabel.py`, `tests/test_correctness_fixes.py`, `scripts/{audit_port.py,validate_b200.sh,verify_execution.py}`, `DESIGN_A1_A2.md`, README and validation/report artifacts. `grpo_speculative.py`, `policy_lag_analysis.py` and retained old launcher names are small compatibility forwarders, not parallel algorithms.
 
-Only three ported runtime files differ from source: strict SimpleLR loader/rendering adapter, and optional evaluation response caps plus compact teacher tracing in the two generators. Their unconfigured production paths remain covered by the original source parity tests. All OPD proposal, finite sampling, feedback, A optimizer, tree, attention and KV modules are unchanged copies. The full list of original retired active paths follows.
+Five ported runtime files differ from source: the strict SimpleLR loader, rewards, numerically stable mask-correct training objectives, and the two generators with evaluation caps, compact teacher tracing and prefill-EOS row handling. Verified mathematical fixes are documented in CORRECTNESS_VALIDATION.md and DESIGN_A1_A2.md; non-EOS proposal/feedback paths retain source parity coverage. All OPD proposal, finite sampling, feedback, A optimizer, tree, attention and KV modules remain unchanged copies. The local helper/generation_edges.py only handles immediate prefill EOS. The full list of original retired active paths follows.
 
 - `helper/eagle3_supervision.py`
 - `helper/drift_metrics.py`
@@ -141,4 +141,4 @@ python scripts/audit_port.py --reference ../SpecNaacl
 python -m pytest -q
 ```
 
-The reference argument is only an optional read-only development audit; it is never used by the experiment. Validation logs and precise hardware/model/checkpoint limits are recorded in `IMPLEMENTATION_REPORT.md`.
+The reference argument is only an optional read-only development audit; it is never used by the experiment. Current validation logs and precise hardware/model/checkpoint limits are recorded in `CORRECTNESS_VALIDATION.md`; `IMPLEMENTATION_REPORT.md` describes the historical initial port.

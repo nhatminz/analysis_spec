@@ -1,0 +1,18 @@
+{
+  "b200_execution_verified": false,
+  "device": "NVIDIA GeForce RTX 3090",
+  "draft_checkpoint": "/mnt/hdd/nhatminh/.specnaacl-validation/qwen3b-modern/checkpoints/smoke-latest/draft.pth",
+  "draft_sha256": "ddadc931fcafe9caeb45ddcc428d8e0912d6aa59a62fe8bc0cfe7c6f8830b278",
+  "errors": [],
+  "eval_max_new_tokens": 256,
+  "evaluation_peak_cuda_allocated_bytes": 11694345728,
+  "evaluation_responses": 96,
+  "measurement_boundaries": 1,
+  "projector_pretrained": false,
+  "real_target_updates": 1,
+  "responses_per_prompt": 8,
+  "status": "PASS",
+  "train_max_length": 2048,
+  "train_prompts": 8,
+  "training_peak_cuda_allocated_bytes": 20017797120
+}

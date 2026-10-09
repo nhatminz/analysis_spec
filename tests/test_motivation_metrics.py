@@ -20,7 +20,7 @@ def test_six_conditions_ratio_of_sums_and_paired_interaction():
     assert before==digest(np.random.get_state())
     assert summarize(records(64),20,64,samples=1)['eval_trajectories']==384
     assert aal([dict(accepted_draft_length_sum=10,verification_rounds=1),
-                dict(accepted_draft_length_sum=1,verification_rounds=10)])==1
+                dict(accepted_draft_length_sum=10,verification_rounds=10)])==20/11
     with pytest.raises(ValueError):aal([dict(accepted_draft_length_sum=1,verification_rounds=0)])
     with pytest.raises(ValueError):summarize(rows[:-1],20,16)
     rows[-1]['prompt_id']='0'

@@ -1,0 +1,47 @@
+...........ssssssssssssssssss.sssssssssssss.....ssssssssssss............ [ 23%]
+......s.s.........sss.....................ss.......sss.............sss.. [ 46%]
+.ssssssssss....sssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 69%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 92%]
+sssssssssssss....sssss...                                                [100%]
+=============================== warnings summary ===============================
+tests/test_correctness_fixes.py::test_invalid_data_answers_are_recorded_or_rejected
+  /mnt/hdd/nhatminh/SpecDecode/analysis_spec/motivation/data.py:93: RuntimeWarning: train: excluding 1 invalid gold labels: train:8
+    if invalid:warnings.warn(f'{split}: excluding {len(invalid)} invalid gold labels: '+', '.join(r['id'] for r in invalid),RuntimeWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [2] tests/test_fastgrpo_rewrite.py:57: original source is CUDA-only
+SKIPPED [12] tests/test_fastgrpo_rewrite.py:72: original CUDA sampler parity
+SKIPPED [1] tests/test_fastgrpo_rewrite.py:84: CUDA
+SKIPPED [2] tests/test_fastgrpo_rewrite.py:108: CUDA
+SKIPPED [1] tests/test_fastgrpo_rewrite.py:126: CUDA
+SKIPPED [1] tests/test_fastgrpo_rewrite.py:162: CUDA
+SKIPPED [6] tests/test_fastgrpo_rewrite.py:177: Triton full-vocabulary tests
+SKIPPED [6] tests/test_fastgrpo_rewrite.py:207: CUDA sampler metadata
+SKIPPED [1] tests/test_motivation_cuda.py:51: Production generator requires CUDA
+SKIPPED [1] tests/test_motivation_cuda.py:76: Production generator requires CUDA
+SKIPPED [1] tests/test_motivation_cuda.py:93: Production generator requires CUDA
+SKIPPED [1] tests/test_motivation_cuda.py:117: Production generator requires CUDA
+SKIPPED [6] tests/test_motivation_cuda.py:188: Production generator requires CUDA
+SKIPPED [1] tests/test_motivation_cuda.py:230: Production generator requires CUDA
+SKIPPED [1] tests/test_motivation_cuda.py:264: Production generator requires CUDA
+SKIPPED [1] tests/test_opd_final_optimization.py:80: greedy teacher CUDA
+SKIPPED [1] tests/test_opd_final_optimization.py:106: sparse CUDA scratch capacity
+SKIPPED [3] tests/test_opd_memory_revision.py:74: CUDA alias/race stress
+SKIPPED [1] tests/test_opd_profiles.py:74: startup resolver with actual hardware key
+SKIPPED [1] tests/test_opd_profiles.py:88: runtime dtype/vocab re-discovery
+SKIPPED [1] tests/test_opd_profiles.py:176: real proposal tuning smoke
+SKIPPED [1] tests/test_opd_profiles.py:191: GPU dispatch counters and only-selected launches
+SKIPPED [1] tests/test_opd_profiles.py:223: actual CUDA packet/update stream
+SKIPPED [1] tests/test_opd_reflex.py:152: CUDA retained zero-row identity
+SKIPPED [2] tests/test_opd_reflex.py:168: native BF16 selected-row head oracle
+SKIPPED [10] tests/test_opd_revision.py:40: exact adaptive CUDA GEMM/sparse parity
+SKIPPED [96] tests/test_opd_sampling_finite.py:41: CUDA sampler parity
+SKIPPED [2] tests/test_opd_sampling_finite.py:64: CUDA sampler parity
+SKIPPED [24] tests/test_opd_sampling_finite.py:80: CUDA sampler parity
+SKIPPED [12] tests/test_opd_sampling_finite.py:104: CUDA sampler parity
+SKIPPED [4] tests/test_opd_sampling_finite.py:147: CUDA sampler parity
+SKIPPED [4] tests/test_opd_sampling_finite.py:163: CUDA sampler parity
+SKIPPED [3] tests/test_opd_sampling_finite.py:199: CUDA sampler parity
+SKIPPED [2] tests/test_opd_sampling_finite.py:216: CUDA sampler parity
+100 passed, 213 skipped, 1 warning in 4.37s

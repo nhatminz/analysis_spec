@@ -131,8 +131,8 @@
       "source": "helper/rewards.py",
       "destination": "helper/rewards.py",
       "sha256": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30",
-      "changes": "none",
-      "destination_sha256": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30"
+      "changes": "Remove unparseable-gold reward=1; validate/cached gold parsing and explicit numeric LaTeX grouping normalization",
+      "destination_sha256": "621f8a202576eaf47c5ac062e28eb67b74e2145cdf10b1bf5c5c8bb0bcd214d6"
     },
     {
       "source": "helper/__init__.py",
@@ -173,8 +173,8 @@
       "source": "helper/fastgrpo_generate.py",
       "destination": "helper/fastgrpo_generate.py",
       "sha256": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93",
-      "changes": "Opt-in exact single-response evaluation cap and compact teacher-call/KV trace; default arithmetic unchanged",
-      "destination_sha256": "45494e85bb51f972d094c5f3394168ee6f60a6aaaab12c3bbb984fe4cdf96d30"
+      "changes": "Opt-in exact evaluation cap and compact teacher trace; fix prefill EOS termination/row compaction, unchanged non-EOS tree arithmetic",
+      "destination_sha256": "a60a05c0f793ee0fd50f66a5d527dcbc71070dcf415c3056f883ac4540ca4b11"
     },
     {
       "source": "helper/modeling_draft.py",
@@ -187,15 +187,15 @@
       "source": "helper/fastgrpo_training.py",
       "destination": "helper/fastgrpo_training.py",
       "sha256": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359",
-      "changes": "none",
-      "destination_sha256": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359"
+      "changes": "Correct padded last-token mask and empty-example normalization; stable chunked soft CE/GRPO logps, uniform final-microbatch accumulation",
+      "destination_sha256": "d8b355c8b204a1fc6c170033a61b09962c06d5266ee183815f6a5d58e650f126"
     },
     {
       "source": "helper/opd_generate.py",
       "destination": "helper/opd_generate.py",
       "sha256": "d078ad2b23680c83a18e3cbb35ff7c4b2071a7577ed9404b8c9413a4d69da806",
-      "changes": "Opt-in single-response exact evaluation cap before feedback/counters; default arithmetic unchanged",
-      "destination_sha256": "8e52e3ec75ae8dc2ac86867845114b007eefae69b98a66209118406dc73cab4c"
+      "changes": "Opt-in exact evaluation cap; fix prefill EOS termination/row compaction, unchanged proposal/feedback kernels",
+      "destination_sha256": "d0bcc76ddfdfe3a4365573c940f479e3e72ff6149db9fac71f74c717cb9366e9"
     },
     {
       "source": "helper/opd_reflex.py",
@@ -348,8 +348,8 @@
       "source": "tests/test_fastgrpo_rewrite.py",
       "destination": "tests/test_fastgrpo_rewrite.py",
       "sha256": "b18939043b4c427bf92b68f192d04cc0042e9a46a7405715eb9b9d26f3fdec80",
-      "changes": "none",
-      "destination_sha256": "b18939043b4c427bf92b68f192d04cc0042e9a46a7405715eb9b9d26f3fdec80"
+      "changes": "Preserve valid upstream objective parity case; independent tests expose/fix padding and final accumulation defects",
+      "destination_sha256": "68257ad28bac9a705e6340e437956b446a06d2ad4b7e1928cc011803e3f3348f"
     },
     {
       "source": "tests/test_opd_sampling_finite.py",

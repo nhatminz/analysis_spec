@@ -1,0 +1,651 @@
+{
+  "distribution": "full softmax, temperature=1, no truncation",
+  "distribution_tv_tolerance": 0.02,
+  "examples": [
+    {
+      "checked_positions": 699,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 0,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "6d315b31c986cfa3a3fccb50a54aa1a836cb2d323e93fa5a27d19bcb0be1ad06",
+      "supervised_positions": 538
+    },
+    {
+      "checked_positions": 423,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 1,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "5f68dd014b3b9e26c2370d5dcb652395be19ad419ed3b4cb2e407aa6e5d2fc69",
+      "supervised_positions": 262
+    },
+    {
+      "checked_positions": 389,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 2,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "51620d9e0a749244720712b10befff19b001b33171bb8a90337e68a6757b7b4c",
+      "supervised_positions": 228
+    },
+    {
+      "checked_positions": 594,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 3,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "1ca2a6e86892165fc030d7c85fa9faa483ad3054dcfa62128921e72277001282",
+      "supervised_positions": 433
+    },
+    {
+      "checked_positions": 572,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 4,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "15b2c04f9015f7818c72f5246c8eaf7b36fc89cedd0bd6cd4f8c1d29171f1591",
+      "supervised_positions": 411
+    },
+    {
+      "checked_positions": 341,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 5,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "3ad15d39ab93ead3ad067e6addf4be82cdc6643d85b153ab9854f17bf281656c",
+      "supervised_positions": 180
+    },
+    {
+      "checked_positions": 574,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 6,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "9be2e04641b7825ae153decd9e8aeee112c2ca7ab059d9860f70b27a4e89399d",
+      "supervised_positions": 413
+    },
+    {
+      "checked_positions": 704,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 7,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2957",
+      "sequence_sha256": "633fd9947e267bb507faa4a15bb0c1732adad80e9114522531fc806352d84879",
+      "supervised_positions": 543
+    },
+    {
+      "checked_positions": 388,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 8,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "b45991c260c3c4a3006338cdafc9236ac2917c531eba82f59b3971bbaadcfd9c",
+      "supervised_positions": 195
+    },
+    {
+      "checked_positions": 719,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 9,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "23fd5bc29d0a3b24ba3ac1b6a2f932456369e7cfbb2938c0218b5d9a72c331c0",
+      "supervised_positions": 526
+    },
+    {
+      "checked_positions": 829,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 10,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "e906d84e1dd8b117eceab980d1b019e8ae4493955fda5020826fc0b947bb3f88",
+      "supervised_positions": 636
+    },
+    {
+      "checked_positions": 888,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 11,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "f4395c52f7677eac4cba2bb5710d89953fbccfeb4c885c247ee0864d9fd67360",
+      "supervised_positions": 695
+    },
+    {
+      "checked_positions": 305,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 12,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "08f8c340ee7194bebcfdf1b00d0fb17b69964b59959a8c7b292cedb11bc7bd6d",
+      "supervised_positions": 112
+    },
+    {
+      "checked_positions": 511,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 13,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "07d3d4d5d4509f2f6a08cc326a163dfbd5616d197cd22458bdddb037cd59b677",
+      "supervised_positions": 318
+    },
+    {
+      "checked_positions": 345,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 14,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "0a9436333ec92151424a02f98c0ca40833ec1149ad9df387e03616f1f7df060a",
+      "supervised_positions": 152
+    },
+    {
+      "checked_positions": 830,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 15,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:7509",
+      "sequence_sha256": "5cb13b6dd8ba4dc4e7d7d56fcc47efe4bed1de8e52fec173d66879cbb2477948",
+      "supervised_positions": 637
+    },
+    {
+      "checked_positions": 423,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 16,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "a11518d2116f710a490b5c43c829bf8ac0562c996ccf6d28c61f836dd6b11bcf",
+      "supervised_positions": 190
+    },
+    {
+      "checked_positions": 424,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 17,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "8e3bee6770ef9d9b188ac3f5659529dacd882d3c56d192509911f037d35ab73e",
+      "supervised_positions": 191
+    },
+    {
+      "checked_positions": 346,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 18,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "473e993030363a1d0b12ee4cf0d13a23f725a7f7b49036eaed90749fdb787e71",
+      "supervised_positions": 113
+    },
+    {
+      "checked_positions": 474,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 19,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "f40ff56261f076572b0ca7de9bf8a474aeccd0abff7afd24cadf1037409ae703",
+      "supervised_positions": 241
+    },
+    {
+      "checked_positions": 376,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 20,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "5de41761409015f069eb5b356b1e76a8cc91bd7e7a86f799c162c3f189ddada0",
+      "supervised_positions": 143
+    },
+    {
+      "checked_positions": 730,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 21,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "4aba94dbc201fa9c48078df1b23113cbc62af8af303b370e13522cfd1f2ebba6",
+      "supervised_positions": 497
+    },
+    {
+      "checked_positions": 632,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 22,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "3aa61d371276beb3e93afda8ae8885bd234457d05cefcd865ea396408f94433b",
+      "supervised_positions": 399
+    },
+    {
+      "checked_positions": 410,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 23,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:8012",
+      "sequence_sha256": "bc1a2e57a817302d0a537180f73a7966cf4f1af2627df40b3f036512abce8c65",
+      "supervised_positions": 177
+    },
+    {
+      "checked_positions": 586,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 24,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "10d5575cd3074aaefe492dc893b9a461337c144dd63a6440d1f891bd2d0d8a06",
+      "supervised_positions": 446
+    },
+    {
+      "checked_positions": 789,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 25,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "0d5b40da5f546534a6ff3c0fed8c131078c21671d3ed21402eed8f7300fa2aad",
+      "supervised_positions": 649
+    },
+    {
+      "checked_positions": 505,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 26,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "b5ccd2e9ceb4683449e474ca07c46ccffbef1e1ce48e3dd2e4aefa4d9556ba3c",
+      "supervised_positions": 365
+    },
+    {
+      "checked_positions": 692,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 27,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "1cb856476841c7864d0abe87a47d41b7c8d774e76a96b5eb90cf7e0a653337bd",
+      "supervised_positions": 552
+    },
+    {
+      "checked_positions": 706,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 28,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "2ed14c6bfe555f2a6e811bf643d9b9e30841f8a7d35a0844f8ccaf09e5b95c86",
+      "supervised_positions": 566
+    },
+    {
+      "checked_positions": 693,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 29,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "2d2ae0f32427b5008dc8480c77bc6951af94451ecf43304bcdcbd5a81c123549",
+      "supervised_positions": 553
+    },
+    {
+      "checked_positions": 723,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 30,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "2a27cfe568d5ab1b8827f2db25d48f9d365f27ba155cdb1c498d607a17646c39",
+      "supervised_positions": 583
+    },
+    {
+      "checked_positions": 550,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 31,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:1447",
+      "sequence_sha256": "2e8e8832a6916d587bf4df70684e1d79160062bbbc4d2899250f87f28e94a82c",
+      "supervised_positions": 410
+    },
+    {
+      "checked_positions": 748,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 32,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "3b0f84533f08819da038b0f6db9660c315252000a1a853551ef4577070a4cd49",
+      "supervised_positions": 541
+    },
+    {
+      "checked_positions": 906,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 33,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "09c05025041e33f7d90017376ef1a5a76a20dfd2d33dffb25a196f24d6cd0473",
+      "supervised_positions": 699
+    },
+    {
+      "checked_positions": 615,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 34,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "ce1e0364687e763e2bf0758ddb04fe86fec623ed7874023e88db2d218cd4a4d7",
+      "supervised_positions": 408
+    },
+    {
+      "checked_positions": 1018,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 35,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "753ca34b8b5aec8eea84e66e9996c8ddba71599abc9bd1c93f18a39c5f771a73",
+      "supervised_positions": 811
+    },
+    {
+      "checked_positions": 391,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 36,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "a59cb9a45cb4cc8af1aa570a6488f48fb0213d3d8c036c66a404b2f9036a1716",
+      "supervised_positions": 184
+    },
+    {
+      "checked_positions": 857,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 37,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "abbba03b54c3a7e9f20775a12300e3a0a63fbfc5a2d98c7b6d5c2826e76aca39",
+      "supervised_positions": 650
+    },
+    {
+      "checked_positions": 672,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 38,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "2570a664f4c7cadd8514b7ae6a9438d515cf2426e074217a786f987be45965aa",
+      "supervised_positions": 465
+    },
+    {
+      "checked_positions": 764,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 39,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6785",
+      "sequence_sha256": "47957a8ac5ab876619f4be44f564e5271c246db2c60794283111e3f406b6ce39",
+      "supervised_positions": 557
+    },
+    {
+      "checked_positions": 772,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 40,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "1596cac6e63e347982e32a274f3bdcb4d53931ef220f418bef7c298236bfb967",
+      "supervised_positions": 550
+    },
+    {
+      "checked_positions": 386,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 41,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "f7876a2c71adb56558d1b6cf062c9010ff88dba14f1e9651f14af5c6c354a7ae",
+      "supervised_positions": 164
+    },
+    {
+      "checked_positions": 693,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 42,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "fb1e666c0734124bcb238649e5a73ce3d1b2116ee308c75b0a09f39aeeb492f0",
+      "supervised_positions": 471
+    },
+    {
+      "checked_positions": 697,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 43,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "baf504407cb4697ee19c89e28357d9a62357a6b3fd4bfa3f74633d14ef550169",
+      "supervised_positions": 475
+    },
+    {
+      "checked_positions": 743,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 44,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "e65daca37cbeb1cf865ca8785ae654d69a10588c269d03aa186a511b897960e1",
+      "supervised_positions": 521
+    },
+    {
+      "checked_positions": 732,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 45,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "64d5d3c3b112055e79e85a71a0aae12808ec836369bd891368f8af56131a4096",
+      "supervised_positions": 510
+    },
+    {
+      "checked_positions": 891,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 46,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "a62a114d76a9e084fcfc3acf9911e7c53450ce3b188b425c1737e15d9c5cc2e4",
+      "supervised_positions": 669
+    },
+    {
+      "checked_positions": 580,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 47,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2539",
+      "sequence_sha256": "e4d26cb463d60a4e28133693c367b8c4aed0dfa6db123b8e1507408795a8ddf7",
+      "supervised_positions": 358
+    },
+    {
+      "checked_positions": 235,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 48,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "23fa0c8f9d2e6f6cf978874c2a38db2f4dea5972dab30966a45d4098fcc9c936",
+      "supervised_positions": 78
+    },
+    {
+      "checked_positions": 256,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 49,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "b272282b873b69f0dc339e528a59bd985d331b68bf22145b9a4353cc360fcaae",
+      "supervised_positions": 99
+    },
+    {
+      "checked_positions": 255,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 50,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "89e00871e5aa2d6143c5ad44068d01e80dca5560ac84e8d07284efaeede64c44",
+      "supervised_positions": 98
+    },
+    {
+      "checked_positions": 374,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 51,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "0db6904e8ecfbf23b654fe162c283ec8ad5dbb8186783317fa4acb48070752c7",
+      "supervised_positions": 217
+    },
+    {
+      "checked_positions": 301,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 52,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "4c06c83dbaf1925cb16087d2def469292cd3a20f90fe38cc7f4975798dcd287f",
+      "supervised_positions": 144
+    },
+    {
+      "checked_positions": 290,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 53,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "2bcb1d1bad3210e97bd3ff9a2f651d2dbcf2bb45aa6c691848f83e9d59edb951",
+      "supervised_positions": 133
+    },
+    {
+      "checked_positions": 293,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 54,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "a47052546403cf6ddc604fee6904c06c84a8628b447129cd844d1ebd410570cd",
+      "supervised_positions": 136
+    },
+    {
+      "checked_positions": 301,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 55,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:6736",
+      "sequence_sha256": "2a01eedde3f7b82c1212deb0434fa9dad6373f598b13b9dbbf33a7073add0b4b",
+      "supervised_positions": 144
+    },
+    {
+      "checked_positions": 1444,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 56,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "3a61b1a0a8a955a640eb2046df90b9cecf033ce88c255a2f1281e52b24f2d667",
+      "supervised_positions": 1229
+    },
+    {
+      "checked_positions": 1353,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 57,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "9e932fdfd6bbcce5837bfd28e0154b43b4f8d21e3c9c567f7e34fc115d629d41",
+      "supervised_positions": 1138
+    },
+    {
+      "checked_positions": 1447,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 58,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "8028801d93aa0b2cf63e40debc064f98d5667c7f3aace5c1e9643ac7006890ac",
+      "supervised_positions": 1232
+    },
+    {
+      "checked_positions": 1318,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 59,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "5e599c3050de13c04cccfd4c635bb1e32ad8b5261671857ceeb5f53af0a5bd92",
+      "supervised_positions": 1103
+    },
+    {
+      "checked_positions": 1135,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 60,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "8d9ec3f4f5394d49a9d4b9b55722c6131856805b9c4b11337186b7b5482ac6ab",
+      "supervised_positions": 920
+    },
+    {
+      "checked_positions": 1365,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 61,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "7373ff22e872e175f353aea4fc93a87a6d1bf6bd063bd37e05d5ac4242b120db",
+      "supervised_positions": 1150
+    },
+    {
+      "checked_positions": 931,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 62,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "5b6c4800678c5b22f4d103582e9fcf5cf8021a4f8415d9113a99318eb34ffa23",
+      "supervised_positions": 716
+    },
+    {
+      "checked_positions": 1503,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 63,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:2600",
+      "sequence_sha256": "fa77595ab190e03f394dfa3f6844c7957181809b381ad83649aafd00b53824cc",
+      "supervised_positions": 1288
+    }
+  ],
+  "hidden_atol": 0.125,
+  "hidden_rtol": 0.05,
+  "passed": true,
+  "replay_layout": "original sparse tree calls and KV operations",
+  "teacher_head_sha256": "18669b41c78e29577c465a52bedbb6b4f5d0da819c6df9077362bcdb1ecd1fa7"
+}

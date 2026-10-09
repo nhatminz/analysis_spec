@@ -1,0 +1,11 @@
+/mnt/hdd/nhatminh/SpecDecode/analysis_spec/motivation/data.py:93: RuntimeWarning: train: excluding 2 invalid gold labels: train:5054, train:5158
+  if invalid:warnings.warn(f'{split}: excluding {len(invalid)} invalid gold labels: '+', '.join(r['id'] for r in invalid),RuntimeWarning)
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/434 [00:00<?, ?it/s]Loading weights: 100%|██████████| 434/434 [00:00<00:00, 11106.94it/s]
+{
+  "policy_step": 1,
+  "completed_analysis_steps": [
+    1
+  ],
+  "checkpoint": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/correctness_fixes/qwen3b_8x8_cache_release/checkpoints/latest.pt"
+}

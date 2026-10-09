@@ -298,6 +298,14 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
         total_target_time += time.time() - target_time_start
     (target_next_token, _, prefill_metadata) = sample_target_with_metadata(target_logits, do_sample=do_sample, temperature=temperature, top_p=top_p, top_k=top_k, eos_token_id=eos_token_id)
     del _, prefill_metadata, target_logits
+    if (target_next_token==eos_token_id).all():
+        from helper.generation_edges import prefill_eos_output
+        result=prefill_eos_output(input_ids,feature_states,padding_positions,repeated_generate_nums,eos_token_id,
+                                  return_all_draft_input,time.perf_counter()-start_time)
+        result.update({name:0. for name in OPD_COUNTER_NAMES})
+        result.update(opd_final_b_norm=0.,opd_final_b_max_abs=0.,opd_backend='triton')
+        target_past_key_values.end_rollout(max_retained_tokens)
+        return result
     draft_input_ids = torch.concat([input_ids[:, 1:], target_next_token], dim=-1)
     draft_attention_mask = attention_mask.to(model.dtype)
     initial_history = {'generated_ids': target_next_token}
@@ -341,6 +349,20 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
             for _ in range(repeated_generate_nums):
                 new_padding_positions.append(deepcopy(cur_padding_positions))
         padding_positions = new_padding_positions
+    residual_index=list(range(bsz))
+    ended=torch.nonzero(target_next_token[:,0]==eos_token_id,as_tuple=False).flatten().tolist()
+    if ended:
+        keep=[i for i in range(bsz) if i not in ended]
+        selection=torch.tensor(keep,device=device)
+        for i in ended:history.mark_finished(i)
+        target_past_key_values.batch_select_indices(selection)
+        draft_past_key_values.batch_select_indices(selection)
+        target_next_token=target_next_token.index_select(0,selection)
+        draft_hidden_states=draft_hidden_states.index_select(0,selection)
+        next_feature_states=next_feature_states.index_select(0,selection)
+        padding_positions=[padding_positions[i] for i in keep]
+        past_position_ids=[past_position_ids[i] for i in keep]
+        residual_index=keep;bsz=len(keep)
     (draft_token_length, draft_k, draft_total_token) = get_adaptive_hyperparameters(bsz, verification_capacity, max_draft_token_length, max_draft_k, max_verification_num, min_draft_token_length, draft_token_length_c)
     padding_positions_indices = []
     for (batch_id, pad_positions) in enumerate(padding_positions):
@@ -354,9 +376,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
     draft_input_ids_dict = {}
     generated_sequences_dict = {}
     padding_positions_dict = {}
-    residual_index = [_ for _ in range(bsz)]
-    response_accepted_length_sum = [0 for _ in range(bsz)]
-    response_verification_rounds = [0 for _ in range(bsz)]
+    response_accepted_length_sum = [0 for _ in range(rollout_batch_capacity)]
+    response_verification_rounds = [0 for _ in range(rollout_batch_capacity)]
     vocabulary_ids = model.full_vocabulary_ids
     if enabled:
         cache = getattr(model, '_opd_runtime_cache', None)
@@ -374,12 +395,12 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
     model._opd_initial_batch=bsz;model._opd_max_path_capacity=max_draft_token_length+1
     pad_capacity=mask_columns_capacity
     pad_mask=getattr(model,'_opd_padding_workspace',None)
-    if pad_mask is None or pad_mask.shape!=(bsz,pad_capacity) or pad_mask.device!=torch.device(device):
-        pad_mask=torch.empty((bsz,pad_capacity),device=device,dtype=torch.bool);model._opd_padding_workspace=pad_mask
+    if pad_mask is None or pad_mask.shape!=(rollout_batch_capacity,pad_capacity) or pad_mask.device!=torch.device(device):
+        pad_mask=torch.empty((rollout_batch_capacity,pad_capacity),device=device,dtype=torch.bool);model._opd_padding_workspace=pad_mask
     pad_mask.zero_()
     pad_mask[:,:input_ids.shape[-1]].copy_(initial_padding.repeat_interleave(max(1,repeated_generate_nums or 1),0))
-    owners=torch.arange(bsz,device=device,dtype=torch.long)
-    padding_positions_tensor=pad_mask
+    owners=torch.tensor(residual_index,device=device,dtype=torch.long)
+    padding_positions_tensor=pad_mask.index_select(0,owners) if ended else pad_mask
     pad_counts=[len(pad) for pad in padding_positions]
     max_recorded_pad_column=input_ids.shape[-1]
 

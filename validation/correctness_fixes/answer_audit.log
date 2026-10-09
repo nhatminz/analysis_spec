@@ -1,0 +1,69 @@
+train 8523 audited; cumulative invalid 13
+test 500 audited; cumulative invalid 13
+[
+  {
+    "split": "train",
+    "row": 1134,
+    "answer": "\\boxed{a + b + c}"
+  },
+  {
+    "split": "train",
+    "row": 1480,
+    "answer": "\\boxed{\\sin^2 t}"
+  },
+  {
+    "split": "train",
+    "row": 2497,
+    "answer": "\\boxed{\\text{(E)},}"
+  },
+  {
+    "split": "train",
+    "row": 2615,
+    "answer": "\\boxed{7\\text{ hours}.}"
+  },
+  {
+    "split": "train",
+    "row": 2765,
+    "answer": "\\boxed{43_5.}"
+  },
+  {
+    "split": "train",
+    "row": 3470,
+    "answer": "\\boxed{\\begin{pmatrix} 1 & -1 \\\\ 1 & \\phantom -1 \\end{pmatrix}}"
+  },
+  {
+    "split": "train",
+    "row": 3794,
+    "answer": "\\boxed{\\frac{7}{5} + \\frac{1}{5} i.}"
+  },
+  {
+    "split": "train",
+    "row": 5054,
+    "answer": "\\boxed{}"
+  },
+  {
+    "split": "train",
+    "row": 5158,
+    "answer": "\\boxed{}"
+  },
+  {
+    "split": "train",
+    "row": 5687,
+    "answer": "\\boxed{-\\frac{5}{3}.}"
+  },
+  {
+    "split": "train",
+    "row": 6244,
+    "answer": "\\boxed{\\frac \\pi4 + 2 - \\sqrt2}"
+  },
+  {
+    "split": "train",
+    "row": 6819,
+    "answer": "\\boxed{\\approx 8.24 \\text{ mph}}"
+  },
+  {
+    "split": "train",
+    "row": 7915,
+    "answer": "\\boxed{2007 + \\frac\\pi 2}"
+  }
+]

@@ -61,19 +61,45 @@ def validate_draft(path, target_path, target_config_path=''):
     if not isinstance(payload,dict) or 'draft_model' not in payload:
         raise ValueError('Expected FastGRPO {draft_model: state_dict}; EAGLE3/SpecForge exports cannot be used')
     state = payload['draft_model']
-    if set(state) != set(expected):
+    projector=state.get('opd_projector')
+    backbone={k:v for k,v in state.items() if k!='opd_projector'}
+    if set(backbone) != set(expected):
         raise ValueError(f'FastGRPO draft architecture mismatch: missing={sorted(set(expected)-set(state))[:8]}, '
                          f'extra={sorted(set(state)-set(expected))[:8]}')
-    for name, tensor in state.items():
+    for name, tensor in backbone.items():
         if tuple(tensor.shape) != tuple(expected[name].shape):
             raise ValueError(f'Draft {name} shape {tuple(tensor.shape)} != {tuple(expected[name].shape)}')
         if not torch.isfinite(tensor).all(): raise ValueError(f'Nonfinite pretrained draft: {name}')
+    if projector is not None:
+        if projector.ndim!=2 or projector.shape[0]!=QWEN_3B['hidden_size'] or not 1<=projector.shape[1]<=64:
+            raise ValueError('Pretrained Reflex A has incompatible hidden dimension/rank')
+        if not torch.isfinite(projector).all():raise ValueError('Nonfinite pretrained Reflex A')
     # FastGRPO checkpoints carry no embedding/head: these are shared, frozen
     # target modules. The strict key set rejects compact heads/mapping exports.
     return dict(path=str(p.resolve()), sha256=file_hash(p), target_config_path=str(companion.resolve()),
                 target_config_sha256=file_hash(companion), architecture='FastGRPO DraftModel, one decoder layer',
                 embedding_and_head='shared frozen target; full vocabulary; no compact mapping',
-                tokenizer_provenance='target-config special IDs; upstream pretrain exports no tokenizer hash')
+                tokenizer_provenance='target-config special IDs; upstream pretrain exports no tokenizer hash',
+                projector_pretrained=projector is not None,projector_rank=int(projector.shape[1]) if projector is not None else None,
+                projector_initialization='loaded checkpoint A' if projector is not None else 'new head-aligned QR basis, SpecNaacl initialize_projector; trained persistently')
+
+
+def validate_cuda_runtime(require_b200=False):
+    """Reject an unsupported GPU/build before allocating the production models."""
+    import importlib.metadata
+    if not torch.cuda.is_available():raise RuntimeError('CUDA GPU unavailable; production integration requires CUDA')
+    name=torch.cuda.get_device_name(0);capability=torch.cuda.get_device_capability(0)
+    arch=f'sm_{capability[0]}{capability[1]}'
+    built=torch.cuda.get_arch_list()
+    if require_b200 and ('B200' not in name or capability[0]!=10):
+        raise RuntimeError(f'B200 validation requires an NVIDIA B200; detected {name}, capability {capability}')
+    if capability[0]>=10:
+        cuda=tuple(int(x) for x in (torch.version.cuda or '0.0').split('.')[:2])
+        if cuda<(12,8) or arch not in built:
+            raise RuntimeError(f'{name} needs a Blackwell CUDA build (CUDA >=12.8, {arch}); '
+                               f'installed torch={torch.__version__}, CUDA={torch.version.cuda}, architectures={built}')
+    return dict(gpu=name,compute_capability=list(capability),compiled_architectures=built,
+                torch=torch.__version__,cuda=torch.version.cuda,triton=importlib.metadata.version('triton'))
 
 
 def tokenizer_identity(path):

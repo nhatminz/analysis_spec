@@ -1,0 +1,8 @@
+{
+  "checkpoint": "/mnt/hdd/nhatminh/.specnaacl-validation/qwen3b-modern/checkpoints/smoke-latest/draft.pth",
+  "draft_backbone_sha256": "3769078a2249d26a4b1aaba6527a560b6ba0f4d79a70c9b2ac67a6d2253658f4",
+  "projector_pretrained": false,
+  "reflex_A_sha256": "0ab58d3a664aadb71740cb812f4fab42f36daad2f8ac4dc9e0c84df7b8ddb113",
+  "shadow_has_projector": false,
+  "target_sha256": "6a9fa122ef20f29542a120a897d24c3f1d8f56223cbb27ed37d834e8049339dc"
+}

@@ -51,16 +51,22 @@ def build_models(config):
     # Construct BOTH before PEFT: shared target remains frozen, and a later
     # wrapper constructor must not switch off already-enabled target LoRA grads.
     r=FastGRPOModel(deepcopy(dc),target).cuda();s=FastGRPOModel(deepcopy(dc),target).cuda()
+    payload=torch.load(config.draft_checkpoint,map_location='cpu',weights_only=True)['draft_model']
+    backbone={k:v for k,v in payload.items() if k!='opd_projector'}
     for model in (r,s):
-        model.load_model(config.draft_checkpoint)
+        model.draft_model.load_state_dict(backbone,strict=True)
         for p in model.draft_model.parameters():p.requires_grad_(True)
     if digest(r.draft_model.state_dict())!=digest(s.draft_model.state_dict()):raise RuntimeError('Draft initializations differ')
     r.enable_opd(config.opd_rank)
+    if 'opd_projector' in payload:r.load_opd_projector(payload['opd_projector'])
+    del payload,backbone
     for p in target.parameters():p.requires_grad_(False)
     lora=LoraConfig(task_type=TaskType.CAUSAL_LM,r=64,lora_alpha=32,lora_dropout=0.,
                     target_modules=['q_proj','k_proj','v_proj','o_proj','gate_proj','up_proj','down_proj'])
     target=get_peft_model(target,lora)
     if config.target_adapter:target.load_adapter(config.target_adapter,adapter_name='default',is_trainable=True)
+    if config.target_gradient_checkpointing:
+        target.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant':False})
     r.target_model=target;s.target_model=target
     if r.embed_tokens is not s.embed_tokens or r.lm_head is not s.lm_head:raise RuntimeError('Frozen head/embedding identity differs')
     if r.lm_head.weight.requires_grad:raise RuntimeError('Teacher head must stay frozen')
@@ -94,24 +100,37 @@ def rollout(model,batch,tokenizer,config,method,seed,teacher_trace=None):
                                  **({'teacher_trace':teacher_trace} if teacher_trace is not None else {}),
                                  **generator_kwargs(config,method=method,train=True))
     torch.cuda.synchronize()
+    # The reference's end_rollout(0) keeps capacity pools. This experiment
+    # alternates two learners and teacher replay, so idle KV pools otherwise
+    # overlap another complete target cache. Histories own their tensor data;
+    # only completed inference workspaces are released here, after feedback.
+    for name in ('_opd_target_kv_pool','_opd_draft_kv_pool'):
+        cache=getattr(model,name,None)
+        if cache is not None:cache.end_rollout(1)
     return out
 
 
-def update_draft(model,optimizer,outputs,prompt_mask,config,*,projector=False):
-    from helper.fastgrpo_training import training_draft_model
+def update_draft(model,optimizer,outputs,prompt_mask,config,*,projector=False,gradient_snapshot=None):
+    from helper.fastgrpo_training import training_draft_model,draft_supervision_stats
     normal=dict(outputs)
     for key in ('all_draft_input_states','all_draft_input_ids'):
         normal[key]=[x.to(model.device).clone() for x in outputs[key]]
     optimizer.zero_grad(set_to_none=True)
+    stats=draft_supervision_stats(normal,prompt_mask,config.responses_per_prompt)
     loss=training_draft_model(model,normal,prompt_mask,repeated_generate_nums=config.responses_per_prompt,
                              max_training_token=config.max_training_token,max_training_padding_gap=config.max_training_padding_gap,
-                             draft_accumulation_steps=1)
+                             draft_accumulation_steps=1,ce_chunk_size=config.draft_ce_chunk_size)
     if not np.isfinite(loss).all():raise RuntimeError('Nonfinite production draft objective; refusing optimizer step')
     if projector:model.apply_opd_projector_gradient()
     grads=gradients(model.draft_model)
-    if not grads or any(not torch.isfinite(g).all() for g in grads.values()):raise RuntimeError('Missing/nonfinite draft gradients')
-    optimizer.step();optimizer.zero_grad(set_to_none=True)
-    return dict(feature_loss=loss[0],distribution_loss=loss[1],gradient_sha256=digest(grads))
+    if gradient_snapshot is not None:gradient_snapshot.update(grads)
+    if any(not torch.isfinite(g).all() for g in grads.values()):raise RuntimeError('Nonfinite draft gradients')
+    applied=bool(grads) and any(torch.count_nonzero(g).item() for g in grads.values())
+    if applied:optimizer.step()
+    optimizer.zero_grad(set_to_none=True)
+    return dict(feature_loss=loss[0],distribution_loss=loss[1],gradient_sha256=digest(grads),
+                optimizer_steps=int(applied),projector_gradient_norm=float(grads['opd_projector'].norm()) if 'opd_projector' in grads else None,
+                **{k:v for k,v in stats.items() if k!='valid_indices'})
 
 
 def target_batch(rows,batch,outputs,tokenizer,config):
@@ -125,8 +144,8 @@ def target_batch(rows,batch,outputs,tokenizer,config):
         rewards=np.array(accuracy_reward_func(texts,[row['answer']]*len(texts)))+.2*np.array(format_reward_func(texts))
         all_rewards.append(rewards.tolist())
         # Preserve the reference exclusion of zero-variance groups. If all are
-        # excluded, execute a real zero-gradient target optimizer step and label
-        # zero drift instead of changing the meaning of policy_step.
+        # excluded, the runner saves the attempt without a target optimizer
+        # step; policy_step counts only completed target updates.
         if rewards.std()==0:continue
         advantages=(rewards-rewards.mean())/rewards.std()
         for ids,adv in zip(responses,advantages):
@@ -135,45 +154,80 @@ def target_batch(rows,batch,outputs,tokenizer,config):
     return records,all_rewards
 
 
-def update_target(target,optimizer,records,config,*,zero_update=False):
-    from helper.fastgrpo_training import compute_target_loss
+@contextmanager
+def target_loss_mode(target,checkpointing):
+    modes=[(module,module.training) for module in target.modules()]
+    try:
+        if checkpointing:
+            target.train()
+            # Preserve the reference's disabled dropout during GRPO, while
+            # enabling HF decoder checkpointing on both the 4.x and 5.x APIs.
+            for module in target.modules():
+                if isinstance(module,torch.nn.Dropout):module.training=False
+        yield
+    finally:
+        for module,mode in modes:module.training=mode
+
+
+def prepare_target_update(target,optimizer,records,config):
+    """Compute gradients without advancing the optimizer or target policy."""
+    from helper.fastgrpo_training import compute_target_loss,token_logps
     optimizer.zero_grad(set_to_none=True);total=0.
     ordered=sorted(records,key=lambda row:len(row['ids']))
     groups=[];group=[];maximum=0
     for row in ordered:
+        if len(row['mask'])!=len(row['ids']) or not any(row['mask'][:-1]):
+            raise ValueError('GRPO response has no aligned supervised tokens')
         length=len(row['ids'])
         if group and (max(maximum,length)*(len(group)+1)>config.max_training_token or
                       (length-maximum)*len(group)>config.max_training_padding_gap):
             groups.append(group);group=[];maximum=0
         group.append(row);maximum=max(maximum,length)
     if group:groups.append(group)
-    for group in groups:
-        length=max(len(r['ids']) for r in group);device=target.device
-        ids=torch.tensor([r['ids']+[0]*(length-len(r['ids'])) for r in group],device=device)
-        attn=torch.tensor([[1]*len(r['ids'])+[0]*(length-len(r['ids'])) for r in group],device=device)
-        mask=torch.tensor([r['mask']+[0]*(length-len(r['ids'])) for r in group],device=device)
-        reward=torch.tensor([r['advantage'] for r in group],device=device).unsqueeze(-1)
-        with target.disable_adapter(),torch.no_grad():reference=target(input_ids=ids,attention_mask=attn,use_cache=False).logits
-        logits=target(input_ids=ids,attention_mask=attn,use_cache=False).logits
-        loss,*_=compute_target_loss(logits,reference,None,ids,mask,reward,config.epsilon,config.beta,0)
-        if not torch.isfinite(loss):raise RuntimeError('Nonfinite GRPO loss')
-        (loss/max(len(records),1)).backward();total+=float(loss.detach())
-        del logits,reference,loss
-    if not records or zero_update:
-        # AdamW momentum/weight decay would change a zero-gradient parameter.
-        # Temporarily set LR=0 to make this a true no-change placebo, while
-        # calling exactly one real optimizer.step(). Optimizer moments advance.
-        for p in target.parameters():
-            if p.requires_grad:p.grad=torch.zeros_like(p)
-        rates=[g['lr'] for g in optimizer.param_groups]
-        for g in optimizer.param_groups:g['lr']=0.
-        try:optimizer.step()
-        finally:
-            for g,lr in zip(optimizer.param_groups,rates):g['lr']=lr
-    else:optimizer.step()
+    with target_loss_mode(target,config.target_gradient_checkpointing):
+        for group in groups:
+            length=max(len(r['ids']) for r in group);device=target.device
+            ids=torch.tensor([r['ids']+[0]*(length-len(r['ids'])) for r in group],device=device)
+            attn=torch.tensor([[1]*len(r['ids'])+[0]*(length-len(r['ids'])) for r in group],device=device)
+            mask=torch.tensor([r['mask']+[0]*(length-len(r['ids'])) for r in group],device=device)
+            reward=torch.tensor([r['advantage'] for r in group],device=device).unsqueeze(-1)
+            with target.disable_adapter(),torch.no_grad():
+                reference_logits=target(input_ids=ids,attention_mask=attn,use_cache=False).logits
+                reference=token_logps(reference_logits[:,:-1],ids[:,1:])
+                del reference_logits
+            logits=target(input_ids=ids,attention_mask=attn,use_cache=False).logits
+            terms=compute_target_loss(logits,reference,None,ids,mask,reward,config.epsilon,config.beta,0)
+            loss=terms[0];del terms
+            if not torch.isfinite(loss):raise RuntimeError('Nonfinite GRPO loss; no optimizer step is allowed')
+            (loss/len(records)).backward();total+=float(loss.detach())
+            del logits,reference,loss
+    grads=[p.grad for p in target.parameters() if p.requires_grad and p.grad is not None]
+    if any(not torch.isfinite(g).all() for g in grads):
+        optimizer.zero_grad(set_to_none=True)
+        raise RuntimeError('Nonfinite target gradient; refusing optimizer step')
+    norm=float(torch.stack([g.float().norm() for g in grads]).norm()) if grads else 0.
+    if not np.isfinite(norm):raise RuntimeError('Nonfinite target gradient norm')
+    reason='all_reward_groups_excluded' if not records else ('zero_gradient' if norm==0 else None)
+    if reason:optimizer.zero_grad(set_to_none=True)
+    return dict(target_loss=total/max(len(records),1),target_trajectories=len(records),target_gradient_norm=norm,
+                target_optimizer_steps=0,target_skip_reason=reason,all_reward_groups_excluded=not records)
+
+
+def commit_target_update(optimizer,prepared):
+    if prepared['target_skip_reason'] is None:
+        optimizer.step()
+        prepared=dict(prepared,target_optimizer_steps=1)
     optimizer.zero_grad(set_to_none=True)
-    return dict(target_loss=total/max(len(records),1),target_trajectories=len(records),target_optimizer_steps=1,
-                zero_update_control=zero_update,all_reward_groups_excluded=not records)
+    return prepared
+
+
+def update_target(target,optimizer,records,config,*,zero_update=False):
+    if zero_update:
+        # A control must not advance Adam moments, decay parameters or consume
+        # a training policy step. Production uses a separate shadow placebo.
+        return dict(target_loss=0.,target_trajectories=0,target_gradient_norm=0.,target_optimizer_steps=0,
+                    target_skip_reason='isolated_zero_drift_control',all_reward_groups_excluded=False)
+    return commit_target_update(optimizer,prepare_target_update(target,optimizer,records,config))
 
 
 def target_state(target):
@@ -237,12 +291,16 @@ def evaluate(model,rows,tokenizer,config,step,condition,target_old_id,target_new
             if len(out['generated_token_ids'][0])>config.eval_max_new_tokens:raise RuntimeError('Evaluation exceeded common response cap')
             if len(out['generated_token_ids'])!=1:raise RuntimeError('Eval produced multiple responses per test prompt')
             denom=int(out['response_verification_rounds'][0]);num=int(out['response_accepted_length_sum'][0])
-            if denom<=0:raise RuntimeError('No verification rounds; cannot report AAL')
+            if denom<0 or num<denom or (denom==0 and (num!=0 or out['generated_token_ids'][0]!=[tokenizer.eos_token_id])):
+                raise RuntimeError('Invalid verification counters/EOS bookkeeping')
+            if len(out['generated_token_ids'][0])!=num+1:
+                raise RuntimeError('Accepted-length counters disagree with emitted tokens (prefill excluded)')
             if method=='opd_reflex' and not feedback and (out['opd_updates']!=0 or out.get('opd_final_b_norm',0)!=0):
                 raise RuntimeError('A2 OFF changed B despite lr=0')
             records.append(dict(policy_step=step,condition=condition,prompt_id=row['id'],question_sha256=row['question_sha256'],
                                 sample_index=0,generation_seed=seed,accepted_draft_length_sum=num,verification_rounds=denom,
                                 generated_token_length=len(out['generated_token_ids'][0]),
+                                aal_defined=denom>0,termination='prefill_eos' if denom==0 else 'verified_response',
                                 generated_token_ids=out['generated_token_ids'][0],
                                 proposed_draft_tokens=int(out['total_proposed_draft_tokens']),accepted_proposal_tokens=int(out['total_accepted_draft_tokens']),
                                 target_old_sha256=target_old_id,target_new_sha256=target_new_id,

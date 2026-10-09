@@ -1,0 +1,60 @@
+.F...................................................................    [100%]
+=================================== FAILURES ===================================
+______________ test_invalid_data_answers_are_recorded_or_rejected ______________
+
+tmp_path = PosixPath('/tmp/pytest-of-hmi/pytest-353/test_invalid_data_answers_are_0')
+
+    def test_invalid_data_answers_are_recorded_or_rejected(tmp_path):
+        from test_motivation_data import files,Tokenizer
+        from motivation.data import prepare,extract_row
+        import pandas as pd
+        train,test=files(tmp_path)
+        rows=pd.read_parquet(train).to_dict('records')
+        rows.append(dict(prompt='invalid distinct question',reward_model={'ground_truth':''}))
+>       pd.DataFrame(rows).to_parquet(train)
+
+analysis_spec/tests/test_correctness_fixes.py:30: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../fastgrpo_env/lib/python3.10/site-packages/pandas/util/_decorators.py:333: in wrapper
+    return func(*args, **kwargs)
+../fastgrpo_env/lib/python3.10/site-packages/pandas/core/frame.py:3124: in to_parquet
+    return to_parquet(
+../fastgrpo_env/lib/python3.10/site-packages/pandas/io/parquet.py:482: in to_parquet
+    impl.write(
+../fastgrpo_env/lib/python3.10/site-packages/pandas/io/parquet.py:191: in write
+    table = self.api.Table.from_pandas(df, **from_pandas_kwargs)
+pyarrow/table.pxi:4768: in pyarrow.lib.Table.from_pandas
+    ???
+../fastgrpo_env/lib/python3.10/site-packages/pyarrow/pandas_compat.py:651: in dataframe_to_arrays
+    arrays = [convert_column(c, f)
+../fastgrpo_env/lib/python3.10/site-packages/pyarrow/pandas_compat.py:651: in <listcomp>
+    arrays = [convert_column(c, f)
+../fastgrpo_env/lib/python3.10/site-packages/pyarrow/pandas_compat.py:639: in convert_column
+    raise e
+../fastgrpo_env/lib/python3.10/site-packages/pyarrow/pandas_compat.py:633: in convert_column
+    result = pa.array(col, type=type_, from_pandas=True, safe=safe)
+pyarrow/array.pxi:390: in pyarrow.lib.array
+    ???
+pyarrow/array.pxi:91: in pyarrow.lib._ndarray_to_array
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   ???
+E   pyarrow.lib.ArrowInvalid: ('cannot mix list and non-list, non-null values', 'Conversion failed for column prompt with type object')
+
+pyarrow/error.pxi:92: ArrowInvalid
+=============================== warnings summary ===============================
+tests/test_motivation_state.py::test_one_actual_target_step_and_control_cannot_change_weights
+tests/test_motivation_cuda.py::test_single_target_step_resume_vs_uninterrupted_and_unscheduled_no_eval
+  /mnt/hdd/nhatminh/fastgrpo_env/lib/python3.10/site-packages/peft/utils/save_and_load.py:372: UserWarning: Could not find a config file in  - will assume that the vocabulary was not modified.
+    warnings.warn(
+
+tests/test_motivation_cuda.py: 5 warnings
+tests/test_fastgrpo_rewrite.py: 15 warnings
+  /mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_reflex.py:180: UserWarning: No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.
+    warnings.warn('No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.')
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED analysis_spec/tests/test_correctness_fixes.py::test_invalid_data_answers_are_recorded_or_rejected
+1 failed, 68 passed, 22 warnings in 22.23s

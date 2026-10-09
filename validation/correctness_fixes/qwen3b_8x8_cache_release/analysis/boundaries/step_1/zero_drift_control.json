@@ -1,0 +1,66 @@
+{
+  "at_policy_step": 1,
+  "bitwise_equal": false,
+  "comparisons": {
+    "gradients": {
+      "bitwise_equal": false,
+      "different_tensors": 5,
+      "failed_paths": [],
+      "max_abs_error": 1.6763806343078613e-08,
+      "max_relative_l2_error": 2.9250483393042692e-05,
+      "max_tolerance_fraction": 0.08839674126764414,
+      "passed": true
+    },
+    "loss": {
+      "bitwise_equal": true,
+      "different_tensors": 0,
+      "failed_paths": [],
+      "max_abs_error": 0.0,
+      "max_relative_l2_error": 0.0,
+      "max_tolerance_fraction": 0.0,
+      "passed": true
+    },
+    "optimizer": {
+      "bitwise_equal": false,
+      "different_tensors": 10,
+      "failed_paths": [],
+      "max_abs_error": 1.862645149230957e-09,
+      "max_relative_l2_error": 3.4638373190090554e-05,
+      "max_tolerance_fraction": 0.11033175527501748,
+      "passed": true
+    },
+    "weights": {
+      "bitwise_equal": false,
+      "different_tensors": 3,
+      "failed_paths": [],
+      "max_abs_error": 0.0001220703125,
+      "max_relative_l2_error": 5.121898496683073e-06,
+      "max_tolerance_fraction": 0.703296699244725,
+      "passed": true
+    }
+  },
+  "loss_fresh": {
+    "distribution_loss": 0.7622945951297879,
+    "empty_examples": 0,
+    "feature_loss": 2.520893882960081,
+    "gradient_sha256": "bea7b97c013bc726b01326e14c710ab02e2f4dd674ac4cb91e648b58f447a024",
+    "optimizer_steps": 1,
+    "projector_gradient_norm": null,
+    "supervised_tokens": 30212,
+    "valid_examples": 64
+  },
+  "loss_stale": {
+    "distribution_loss": 0.7622945951297879,
+    "empty_examples": 0,
+    "feature_loss": 2.520893882960081,
+    "gradient_sha256": "2931e6b37c723c92625251dfb4c11de3af0a2098c1a23d0982bda2e528b6060c",
+    "optimizer_steps": 1,
+    "projector_gradient_norm": null,
+    "supervised_tokens": 30212,
+    "valid_examples": 64
+  },
+  "passed": true,
+  "role": "isolated_shadow_placebo",
+  "target_optimizer_steps": 0,
+  "target_sha256": "6a9fa122ef20f29542a120a897d24c3f1d8f56223cbb27ed37d834e8049339dc"
+}

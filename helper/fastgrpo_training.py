@@ -1,262 +1,115 @@
-"""Objectives copied from sources/FastGRPO/grpo_speculative.py.
+"""Production FastGRPO objectives with explicit empty-mask and numerical fixes.
 
-Only formerly global configuration is passed explicitly. In particular, the
-upstream final draft microbatch is NOT divided by draft_accumulation_steps.
-Default accumulation=1; retaining this behavior makes nondefault parity testable.
+For valid examples the objective remains mean_example(2*SmoothL1 + .1*soft CE).
+Empty examples contribute neither loss nor its normalization. Every packing
+microbatch uses the same global normalization, including the final one.
 """
 import torch
+import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
+
+
+def token_logps(logits, labels, chunk_size=128,mask=None):
+    """Gather next-token log probabilities without a full FP32 [B,T,V] copy."""
+    parts=[]
+    def gather(values, ids, valid):
+        values=values.float().masked_fill(~valid[...,None],0.)
+        return values.log_softmax(-1).gather(-1,ids[...,None]).squeeze(-1)
+    if mask is None:mask=torch.ones_like(labels,dtype=torch.bool)
+    for start in range(0,logits.shape[1],chunk_size):
+        values=logits[:,start:start+chunk_size];ids=labels[:,start:start+chunk_size]
+        valid=mask[:,start:start+chunk_size]
+        parts.append(checkpoint(gather,values,ids,valid,use_reentrant=False,preserve_rng_state=False)
+                     if values.requires_grad else gather(values,ids,valid))
+    return torch.cat(parts,dim=1)
+
 
 def compute_target_loss(logits,ref_logits,old_logits,labels,mask,reward,epsilon,beta,grpo_iteration):
-
-    logits = logits[...,:-1,:].float()
-    mask = mask[...,:-1]
-
-    labels = labels.to(logits.device)
-    labels = labels[..., 1:]
-    
-    logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
-
+    mask=mask[...,:-1].to(device=logits.device,dtype=torch.bool)
+    labels=labels[...,1:].to(logits.device)
+    logps=token_logps(logits[...,:-1,:],labels,mask=mask)
     if grpo_iteration==0:
-        ref_logits = ref_logits[...,:-1,:].float()
-        ref_logps = torch.gather(ref_logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2).detach()
-        old_logps = logps.clone().detach()
+        ref_logps=(token_logps(ref_logits[...,:-1,:],labels,mask=mask) if ref_logits.ndim==3 else ref_logits).detach()
+        old_logps=logps.detach()
     else:
-        ref_logps=ref_logits
-        old_logps=old_logits
+        ref_logps=ref_logits;old_logps=old_logits
+    # Mask before exponentiation: ignored padding must never produce 0*Inf/NaN.
+    logps=logps.masked_fill(~mask,0.)
+    ref_logps=ref_logps.masked_fill(~mask,0.)
+    old_logps=old_logps.masked_fill(~mask,0.)
+    ratio=(logps-old_logps).exp()
+    policy=torch.minimum(ratio*reward,ratio.clamp(1-epsilon,1+epsilon)*reward)
+    log_ratio=ref_logps-logps
+    kl=torch.expm1(log_ratio)-log_ratio
+    denominator=mask.sum(-1).clamp_min(1)
+    policy=(policy.masked_fill(~mask,0.)).sum(-1)/denominator
+    kl=(kl.masked_fill(~mask,0.)).sum(-1)/denominator
+    return (-policy+beta*kl).sum(),policy.abs().sum(),kl.sum(),old_logps,ref_logps
 
-    coef1=torch.exp(logps-old_logps)
-    coef2 = torch.clamp(coef1, 1 - epsilon, 1 + epsilon)
-    loss1=torch.min(coef1*reward,coef2*reward)
 
-    coef3=ref_logps-logps
-    loss2=torch.exp(coef3)-coef3-1
+def draft_supervision_stats(outputs,prompt_mask,repeated_generate_nums):
+    states=outputs['all_draft_input_states'];ids=outputs['all_draft_input_ids']
+    if repeated_generate_nums<1 or len(states)!=len(ids) or len(ids)!=len(prompt_mask)*repeated_generate_nums:
+        raise ValueError('Draft histories and prompt/response counts differ')
+    valid=[];tokens=0
+    for i,(h,d) in enumerate(zip(states,ids)):
+        p=int(prompt_mask[i//repeated_generate_nums].sum())
+        if d.ndim!=1 or h.ndim!=2 or len(d)!=len(h) or p<1 or len(d)<p:
+            raise ValueError('Malformed shifted draft history/prompt boundary')
+        n=max(0,len(d)-p-1)
+        if n:valid.append(i);tokens+=n
+    return dict(valid_examples=len(valid),empty_examples=len(ids)-len(valid),
+                supervised_tokens=tokens,valid_indices=valid)
 
-    loss=-(loss1-beta*loss2)
-    loss=loss*mask
-    loss=loss.sum(-1)/mask.sum(-1)
-    
-    loss1=loss1*mask
-    loss1=loss1.sum(-1)/mask.sum(-1)
-    abs_loss1=torch.sum(torch.abs(loss1))
-    loss2=loss2*mask
-    loss2=loss2.sum(-1)/mask.sum(-1)
-    
-    return loss.sum(-1),abs_loss1,loss2.sum(-1),old_logps,ref_logps
 
 def training_draft_model(model,outputs,prompt_mask,*,repeated_generate_nums,
-                         max_training_token,max_training_padding_gap,draft_accumulation_steps):
-    
-
-    all_draft_input_states = outputs['all_draft_input_states']
-    all_draft_input_ids = outputs['all_draft_input_ids']
-    all_prompt_length = [prompt_mask[idx // repeated_generate_nums].sum().item() for idx in range(len(all_draft_input_states))]
-    
-    prompt_mask=prompt_mask.cpu()
+                         max_training_token,max_training_padding_gap,draft_accumulation_steps,
+                         ce_chunk_size=128):
+    if min(max_training_token,draft_accumulation_steps,ce_chunk_size)<1:
+        raise ValueError('Positive packing, accumulation and CE chunk sizes required')
+    stats=draft_supervision_stats(outputs,prompt_mask,repeated_generate_nums)
+    if not stats['valid_examples']:return 0.,0.
+    states=outputs['all_draft_input_states'];ids=outputs['all_draft_input_ids']
+    rows=sorted([(ids[i],states[i],int(prompt_mask[i//repeated_generate_nums].sum()))
+                 for i in stats['valid_indices']],key=lambda x:len(x[0]))
     device=model.target_model.device
-    
-    sorted_pairs = sorted(
-        zip(all_draft_input_ids, all_draft_input_states, all_prompt_length),
-        key=lambda x: len(x[0]),
-        reverse=False  
-    )
-
-    all_draft_input_ids_sorted, all_draft_input_states_sorted, all_prompt_length_sorted = zip(*sorted_pairs)
-
-    all_draft_input_ids = list(all_draft_input_ids_sorted)
-    all_draft_input_states = list(all_draft_input_states_sorted)
-    all_prompt_length = list(all_prompt_length_sorted)
-    
-    l1_loss=torch.nn.SmoothL1Loss(reduction='none')
-    total_loss1,total_loss2=0,0
-    
-    draft_input_states_list=[]
-    draft_input_ids_list=[]
-    prompt_length_list=[]
-    
-    cur_max_length=0
-    hidden_size=all_draft_input_states[0].shape[-1]
-    
-    for idx , (draft_input_states,draft_input_ids,prompt_length) in enumerate(zip(all_draft_input_states,all_draft_input_ids,all_prompt_length)):
-        
-        if ((draft_input_ids.shape[-1]*(len(draft_input_states_list)+1)<=max_training_token*2 and
-            (draft_input_ids.shape[-1]-cur_max_length)*len(draft_input_states_list)<=max_training_padding_gap) or
-            len(draft_input_states_list)==0):
-            
-                draft_input_states_list.append(draft_input_states)
-                draft_input_ids_list.append(draft_input_ids)
-                prompt_length_list.append(prompt_length)
-                
-                cur_max_length=max(cur_max_length, draft_input_ids.shape[-1])
-            
-        else:
-            
-            cur_batch=len(draft_input_states_list)
-
-            loss_mask=[[] for _ in range(cur_batch)]
-            attention_mask=[[] for _ in range(cur_batch)]
-            
-            for idx_seq in range(cur_batch):
-                cur_len=draft_input_ids_list[idx_seq].shape[-1]
-                loss_mask[idx_seq]=[0]*prompt_length_list[idx_seq]+[1]*(cur_len-prompt_length_list[idx_seq])
-                attention_mask[idx_seq]=[1]*cur_len
-
-            for idx_seq in range(cur_batch):
-                cur_len=draft_input_ids_list[idx_seq].shape[-1]
-                padding_len=cur_max_length-cur_len
-                
-                if padding_len>0:
-                    draft_input_states_list[idx_seq]=torch.concat(
-                        [draft_input_states_list[idx_seq],
-                        torch.zeros((padding_len, hidden_size), dtype=draft_input_states_list[idx_seq].dtype, device=device)],
-                        dim=-2)
-                    
-                    draft_input_ids_list[idx_seq]=torch.concat(
-                        [draft_input_ids_list[idx_seq],
-                        torch.zeros(padding_len, dtype=draft_input_ids_list[idx_seq].dtype, device=device)],
-                        dim=-1)
-                    
-                    loss_mask[idx_seq]=loss_mask[idx_seq]+[0]*padding_len
-                    attention_mask[idx_seq]=attention_mask[idx_seq]+[0]*padding_len
-            
-            draft_input_states=torch.stack(draft_input_states_list,dim=0)
-            draft_input_ids=torch.stack(draft_input_ids_list,dim=0)
-            loss_mask=torch.tensor(loss_mask,device=device)
-            attention_mask=torch.tensor(attention_mask,device=device)
-
-            with torch.amp.autocast(str(model.target_model.device),
-                        dtype=torch.bfloat16 if model.dtype==torch.bfloat16 else torch.float16):
-                draft_outputs=model(hidden_states=draft_input_states,input_ids=draft_input_ids,
-                                attention_mask=attention_mask,use_cache=False)
-                
-            next_feature_states=draft_outputs['next_feature_states']
-            draft_hidden_states=draft_outputs['hidden_states'].to(model.target_model.dtype)
-            draft_logits=model.lm_head(draft_hidden_states)
-            
-            with torch.no_grad():
-                target_hidden_states=draft_input_states
-                target_logits=model.target_model.lm_head(target_hidden_states.to(model.target_model.dtype))
-                target_logits=target_logits[:,1:,:].float().softmax(dim=-1).detach()
-                
-            loss1=l1_loss(next_feature_states[:,:-1,:].float(),draft_input_states[:,1:,:].float())
-
-            loss1=torch.mean(loss1,dim=-1)*loss_mask[...,:-1] 
-            loss1=torch.sum(loss1, dim=-1) / torch.sum(loss_mask[...,:-1], dim=-1)
-            loss1=loss1.sum(-1)
-            loss1=loss1*2.0
-            
-            draft_logits=draft_logits[:,:-1,:].float().softmax(dim=-1)
-
-            plogp=target_logits*torch.log(draft_logits)
-            loss2=torch.sum(plogp,dim=-1)*loss_mask[...,:-1]
-            loss2=torch.sum(loss2, dim=-1) / torch.sum(loss_mask[...,:-1], dim=-1)
-            loss2= - loss2.sum(-1)
-
-            loss2=loss2*0.1
-            
-            loss=loss1+loss2
-                
-            total_loss1+=loss1.item()
-            total_loss2+=loss2.item()
-            
-            if torch.isnan(loss).any() or torch.isinf(loss).any():
-                
-                loss = loss.detach()
-                del loss
-                torch.cuda.empty_cache()
-            else:
-
-                loss=loss/len(all_draft_input_states)
-                loss=loss/draft_accumulation_steps
-                loss.backward()
-                
-            draft_input_states_list=[all_draft_input_states[idx]]
-            draft_input_ids_list=[all_draft_input_ids[idx]]
-            prompt_length_list=[all_prompt_length[idx]]
-            cur_max_length=all_draft_input_ids[idx].shape[-1]
-            
-    cur_batch=len(draft_input_states_list)
-
-    loss_mask=[[] for _ in range(cur_batch)]
-    attention_mask=[[] for _ in range(cur_batch)]
-    
-    cur_max_length=0
-    for idx_seq in range(cur_batch):
-        cur_len=draft_input_ids_list[idx_seq].shape[-1]
-        loss_mask[idx_seq]=[0]*prompt_length_list[idx_seq]+[1]*(cur_len-prompt_length_list[idx_seq])
-        attention_mask[idx_seq]=[1]*cur_len
-        
-        cur_max_length=max(cur_max_length, cur_len)
-        
-    for idx_seq in range(cur_batch):
-        cur_len=draft_input_ids_list[idx_seq].shape[-1]
-        padding_len=cur_max_length-cur_len
-        
-        if padding_len>0:
-            draft_input_states_list[idx_seq]=torch.concat(
-                [draft_input_states_list[idx_seq],
-                torch.zeros((padding_len, hidden_size), dtype=draft_input_states_list[idx_seq].dtype, device=device)],
-                dim=-2)
-            
-            draft_input_ids_list[idx_seq]=torch.concat(
-                [draft_input_ids_list[idx_seq],
-                torch.zeros(padding_len, dtype=draft_input_ids_list[idx_seq].dtype, device=device)],
-                dim=-1)
-            
-            loss_mask[idx_seq]=loss_mask[idx_seq]+[0]*padding_len
-            attention_mask[idx_seq]=attention_mask[idx_seq]+[0]*padding_len
-    
-    draft_input_states=torch.stack(draft_input_states_list,dim=0)
-    draft_input_ids=torch.stack(draft_input_ids_list,dim=0)
-    loss_mask=torch.tensor(loss_mask,device=device)
-    attention_mask=torch.tensor(attention_mask,device=device)
-    
-    with torch.amp.autocast(str(model.target_model.device),
-                dtype=torch.bfloat16 if model.dtype==torch.bfloat16 else torch.float16):
-        draft_outputs=model(hidden_states=draft_input_states,input_ids=draft_input_ids,
-                        attention_mask=attention_mask,use_cache=False)
-        
-    next_feature_states=draft_outputs['next_feature_states']
-    draft_hidden_states=draft_outputs['hidden_states'].to(model.target_model.dtype)
-    draft_logits=model.lm_head(draft_hidden_states)
-    
-    with torch.no_grad():
-        target_hidden_states=draft_input_states
-        target_logits=model.target_model.lm_head(target_hidden_states.to(model.target_model.dtype))
-        target_logits=target_logits[:,1:,:].float().softmax(dim=-1).detach()
-        
-    loss1=l1_loss(next_feature_states[:,:-1,:].float(),draft_input_states[:,1:,:].float())
-
-    loss1=torch.mean(loss1,dim=-1)*loss_mask[...,:-1] 
-    loss1=torch.sum(loss1, dim=-1) / torch.sum(loss_mask[...,:-1], dim=-1)
-    loss1=loss1.sum(-1)
-    loss1=loss1*2.0
-    
-    draft_logits=draft_logits[:,:-1,:].float().softmax(dim=-1)
-
-    plogp=target_logits*torch.log(draft_logits)
-    loss2=torch.sum(plogp,dim=-1)*loss_mask[...,:-1]
-    loss2=torch.sum(loss2, dim=-1) / torch.sum(loss_mask[...,:-1], dim=-1)
-    loss2= - loss2.sum(-1)
-
-    loss2=loss2*0.1
-    
-    loss=loss1+loss2
-        
-    total_loss1+=loss1.item()
-    total_loss2+=loss2.item()
-    
-    if torch.isnan(loss).any() or torch.isinf(loss).any():
-        
-        loss = loss.detach()
-        del loss
-        torch.cuda.empty_cache()
-    else:
-
-        loss=loss/len(all_draft_input_states)
-        loss.backward()
-            
-        
-    total_loss1/=len(all_draft_input_states)
-    total_loss2/=len(all_draft_input_states)
-    
-    return total_loss1,total_loss2
+    groups=[];group=[];maximum=0
+    for row in rows:
+        length=len(row[0])
+        if group and (length*(len(group)+1)>2*max_training_token or
+                      (length-maximum)*len(group)>max_training_padding_gap):
+            groups.append(group);group=[]
+        group.append(row);maximum=length
+    if group:groups.append(group)
+    total_feature=total_ce=0.
+    for group in groups:
+        features=torch.nn.utils.rnn.pad_sequence([r[1].to(device) for r in group],batch_first=True)
+        inputs=torch.nn.utils.rnn.pad_sequence([r[0].to(device) for r in group],batch_first=True)
+        length=inputs.shape[1];positions=torch.arange(length,device=device)[None,:]
+        sizes=torch.tensor([len(r[0]) for r in group],device=device)[:,None]
+        prompts=torch.tensor([r[2] for r in group],device=device)[:,None]
+        attention=(positions<sizes).long()
+        valid=(positions[:,:-1]>=prompts)&(positions[:,:-1]<sizes-1)
+        counts=valid.sum(-1)
+        with torch.autocast(device_type=torch.device(device).type,dtype=model.dtype,
+                            enabled=torch.device(device).type=='cuda'):
+            out=model(hidden_states=features,input_ids=inputs,attention_mask=attention,use_cache=False)
+        predicted=out['next_feature_states'][:,:-1][valid].float()
+        teacher=features[:,1:][valid].detach()
+        weights=(valid/counts[:,None]).float()[valid]
+        feature=2.*(F.smooth_l1_loss(predicted,teacher.float(),reduction='none').mean(-1)*weights).sum()
+        actor=out['hidden_states'][:,:-1][valid].to(model.target_model.dtype)
+        def soft_ce(a,t,w):
+            with torch.no_grad():p=model.lm_head(t.to(model.target_model.dtype)).float().softmax(-1)
+            logq=model.lm_head(a).float().log_softmax(-1)
+            return -(p*logq).sum(-1).mul(w).sum()
+        ce=actor.new_zeros((),dtype=torch.float32)
+        for start in range(0,len(actor),ce_chunk_size):
+            args=(actor[start:start+ce_chunk_size],teacher[start:start+ce_chunk_size],weights[start:start+ce_chunk_size])
+            ce=ce+checkpoint(soft_ce,*args,use_reentrant=False,preserve_rng_state=False)
+        ce=ce*.1
+        loss=feature+ce
+        if not torch.isfinite(loss):raise RuntimeError('Nonfinite FastGRPO feature/CE loss; no optimizer step is allowed')
+        total_feature+=float(feature.detach());total_ce+=float(ce.detach())
+        (loss/(stats['valid_examples']*draft_accumulation_steps)).backward()
+    return total_feature/stats['valid_examples'],total_ce/stats['valid_examples']

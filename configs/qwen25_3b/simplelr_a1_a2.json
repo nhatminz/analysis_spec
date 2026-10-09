@@ -65,5 +65,11 @@
   ],
   "smoke": false,
   "smoke_eval_prompts": 2,
-  "save_every": 1
+  "save_every": 1,
+  "max_attempts_per_step": 32,
+  "target_gradient_checkpointing": true,
+  "draft_ce_chunk_size": 128,
+  "require_b200": false,
+  "invalid_answer_policy": "exclude",
+  "validation_run": false
 }

@@ -1,0 +1,8 @@
+/mnt/hdd/nhatminh/SpecDecode/analysis_spec/motivation/data.py:93: RuntimeWarning: train: excluding 2 invalid gold labels: train:5054, train:5158
+  if invalid:warnings.warn(f'{split}: excluding {len(invalid)} invalid gold labels: '+', '.join(r['id'] for r in invalid),RuntimeWarning)
+{
+  "train_unique": 8519,
+  "test_unique": 500,
+  "subset": 64,
+  "manifest": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/correctness_fixes/data/analysis/eval_subset_manifest.json"
+}

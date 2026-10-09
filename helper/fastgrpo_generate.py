@@ -489,6 +489,11 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         raise ValueError('"do_sample" must be True or False')
     
     generated_sequences=target_next_token
+    if (target_next_token==eos_token_id).all():
+        from helper.generation_edges import prefill_eos_output
+        executor.shutdown(wait=True)
+        return prefill_eos_output(input_ids,feature_states,padding_positions,repeated_generate_nums,eos_token_id,
+                                  return_all_draft_input,time.time()-start_time)
     
     draft_input_ids=torch.concat([input_ids[:,1:],target_next_token],dim=-1)
     draft_attention_mask=attention_mask.to(model.dtype)
@@ -550,6 +555,34 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             all_draft_input_states=all_draft_input_states.repeat_interleave(repeated_generate_nums,dim=0)
             all_draft_input_ids=all_draft_input_ids.repeat_interleave(repeated_generate_nums,dim=0)
             
+    draft_input_states_dict={}
+    draft_input_ids_dict={}
+    generated_sequences_dict={}
+    padding_positions_dict={}
+    residual_index=list(range(bsz))
+    ended=torch.nonzero(target_next_token[:,0]==eos_token_id,as_tuple=False).flatten().tolist()
+    if ended:
+        keep=[i for i in range(bsz) if i not in ended]
+        for i in ended:
+            generated_sequences_dict[str(i)]=generated_sequences[i]
+            padding_positions_dict[str(i)]=padding_positions[i]
+            if return_all_draft_input:
+                draft_input_states_dict[str(i)]=all_draft_input_states[i]
+                draft_input_ids_dict[str(i)]=all_draft_input_ids[i]
+        selection=torch.tensor(keep,device=device)
+        target_past_key_values.batch_select_indices(selection)
+        if teacher_trace is not None:teacher_trace.select_rows(selection)
+        draft_past_key_values=[[k.index_select(0,selection),v.index_select(0,selection)] for k,v in draft_past_key_values]
+        target_next_token=target_next_token.index_select(0,selection)
+        generated_sequences=generated_sequences.index_select(0,selection)
+        draft_hidden_states=draft_hidden_states.index_select(0,selection)
+        next_feature_states=next_feature_states.index_select(0,selection)
+        if return_all_draft_input:
+            all_draft_input_states=all_draft_input_states.index_select(0,selection)
+            all_draft_input_ids=all_draft_input_ids.index_select(0,selection)
+        padding_positions=[padding_positions[i] for i in keep]
+        past_position_ids=[past_position_ids[i] for i in keep]
+        residual_index=keep;bsz=len(keep);end_sig=[0]*bsz
     draft_token_length, draft_k, draft_total_token = get_adaptive_hyperparameters(bsz, verification_capacity,
                                 max_draft_token_length, max_draft_k, max_verification_num,
                                 min_draft_token_length, draft_token_length_c)
@@ -568,11 +601,6 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     
     past_position_ids_tensor=torch.tensor(past_position_ids, dtype=torch.int16).to(device).long()
     
-    draft_input_states_dict={}
-    draft_input_ids_dict={}
-    generated_sequences_dict={}
-    padding_positions_dict={}
-    residual_index=[_ for _ in range(bsz)]
         
 
     if statistical_time:
