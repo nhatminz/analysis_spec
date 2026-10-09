@@ -42,20 +42,28 @@ class PackedTree:
         return mask
 
 
-def pack_tree(full_parents, full_contexts, chosen, all_tokens, max_depth):
+def pack_tree(full_parents, full_contexts, chosen, all_tokens, max_depth, *, workspace=None):
     """Keep the original sorted confidence-selected packing and child order."""
     batch, full_count = full_parents.shape
     packed_count = chosen.shape[1]
     device = chosen.device
-    inverse = torch.full((batch, full_count + 1), -1, device=device, dtype=torch.long)
+    inverse = (torch.empty((batch, full_count+1),device=device,dtype=torch.long) if workspace is None
+               else workspace[0][:batch*(full_count+1)].view(batch,full_count+1))
+    inverse.fill_(-1)
     inverse[:, 0] = 0  # full parent=-1 is the root
     packed_ids = torch.arange(1, packed_count + 1, device=device).expand(batch, -1)
     inverse.scatter_(1, chosen + 1, packed_ids)
     parents = inverse.gather(1, full_parents.gather(1, chosen) + 1)
-    # Parent closure is required by the existing verifier too. An asynchronous
-    # device assertion catches bad/underflowed trees without a host .item().
+    # Upstream tree construction also requires every selected ancestor to
+    # exist. Diagnose invalid ancestry without changing native TopK pruning.
     torch._assert_async(((parents >= 0) & (parents < packed_ids)).all(),
                         "confidence-selected draft tree is not parent-closed")
+    if workspace is not None:
+        outputs=[w[:batch*(packed_count+1)].view(batch,packed_count+1) for w in workspace[1:]]
+        outputs[0][:,0]=-1;outputs[0][:,1:].copy_(parents)
+        outputs[1][:,0]=-1;torch.gather(all_tokens,1,chosen,out=outputs[1][:,1:])
+        outputs[2][:,0]=0;torch.gather(full_contexts,1,chosen,out=outputs[2][:,1:])
+        return PackedTree(*outputs,int(max_depth))
     return PackedTree(
         torch.cat((torch.full((batch, 1), -1, device=device, dtype=torch.long), parents), 1),
         torch.cat((torch.full((batch, 1), -1, device=device, dtype=torch.long), all_tokens.gather(1, chosen)), 1),

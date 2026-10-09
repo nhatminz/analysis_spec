@@ -1,0 +1,14 @@
+{
+  "source": "../../../FastGRPO-main",
+  "sha256": {
+    "train_draft.py": "b7e7d5f84a547e52cc59868a3bf95e96b438aff1c878ee7b29227e76acc89629",
+    "LICENSE": "0530078c37f1ed2dc2bacbd92dbea826e8a4ed895978a7f421604983191ac520",
+    "README.md": "d2012e44ab537ea51cf7200302d567075636426905a3710aa0286d36bb5dd3f2",
+    "requirements.txt": "b66dd94375011a7be2d7becc5a0397654a67ea07e1e28a293fe766de4577b853",
+    "grpo_speculative.py": "62bd4428a869db40ad4a8252fb895defd9bbeb33b7deffe486dc43be393607d0",
+    "helper/specualtive_generate.py": "7a129d33f7eb4b9e484784b91f3dabfe1797577053705aa1176cc6bf59528765",
+    "helper/rewards.py": "f871872c58fc3d1eef5da261b78f165bb5db0d6233d3b07de81dd600f59d7d43",
+    "helper/modeling_draft.py": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4",
+    "helper/get_QAs.py": "aab0fe8e541f83b754910ebf3ab2e5dd935405436192733b39b46e4e0b11d0b5"
+  }
+}

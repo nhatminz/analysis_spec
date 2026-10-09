@@ -1,4 +1,13 @@
 __pycache__/
-*.py[cod]
+*.pyc
 .pytest_cache/
-
+.cache/
+.testdeps/
+outputs/
+validation/**/checkpoints/
+validation/**/analysis/boundaries/**/shadow_sequences.pt
+.venv/
+.venv-*/
+cache/
+*_cache/
+*.pyo

@@ -1,0 +1,31 @@
+{
+  "distribution": "full softmax, temperature=1, no truncation",
+  "distribution_tv_tolerance": 0.02,
+  "examples": [
+    {
+      "checked_positions": 192,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 0,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:5764",
+      "sequence_sha256": "ecd0c32de123188336bd2e0b7a64d82b596f45c243f725d4cc9ba28fce255a7e",
+      "supervised_positions": 8
+    },
+    {
+      "checked_positions": 192,
+      "distribution_tv_max": 0.0,
+      "distribution_tv_mean": 0.0,
+      "example_index": 1,
+      "hidden_max_abs": 0.0,
+      "prompt_id": "train:5764",
+      "sequence_sha256": "20fea562bdc5d47bcc2722b06afa78e587990f8f08f22e0f57de41c5465ffc24",
+      "supervised_positions": 8
+    }
+  ],
+  "hidden_atol": 0.125,
+  "hidden_rtol": 0.05,
+  "passed": true,
+  "replay_layout": "original sparse tree calls and KV operations",
+  "teacher_head_sha256": "18669b41c78e29577c465a52bedbb6b4f5d0da819c6df9077362bcdb1ecd1fa7"
+}

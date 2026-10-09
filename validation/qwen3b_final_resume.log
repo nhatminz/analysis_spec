@@ -1,0 +1,9 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/434 [00:00<?, ?it/s]Loading weights: 100%|██████████| 434/434 [00:00<00:00, 10786.04it/s]
+{
+  "policy_step": 1,
+  "completed_analysis_steps": [
+    1
+  ],
+  "checkpoint": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/qwen3b_final_smoke/checkpoints/latest.pt"
+}

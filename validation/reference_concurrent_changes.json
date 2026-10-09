@@ -1,0 +1,21 @@
+{
+  "observed": "Final audit after CUDA/CPU tests and real 3B resume",
+  "changes": [
+    {
+      "path": "grpo_speculative.py",
+      "before_sha256": "4ea9b441c81250587565d1c97904cb4c7290a09103c5aa1e9256ba1724e51e2f",
+      "after_sha256": "f93783e2cbffee9ccb67abaf2c462c55d7c0eefa0c33d9cebfc1bc8350847894"
+    },
+    {
+      "path": "helper/response_alignment.py",
+      "before_sha256": null,
+      "after_sha256": "350338c045bf2319757c4747857e25290a66e71d08304342c09dd6d8d0fe36ff"
+    },
+    {
+      "path": "helper/shared_adapter.py",
+      "before_sha256": null,
+      "after_sha256": "12c9eaa8f8840735c47f5b3124a2502b7c7ef60d89d6ea6d23f613601b1ca9c6"
+    }
+  ],
+  "agent_modifications": "analysis_spec only; external reference edits preserved"
+}

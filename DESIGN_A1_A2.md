@@ -1,0 +1,72 @@
+# One-run SimpleLR policy-lag motivation experiment
+
+The target trajectory is **OPD-driven**. Only the main persistent Reflex learner's accepted rollout IDs enter GRPO. A persistent independent FastGRPO shadow receives the same train prompt IDs and generates its own responses. Fresh is a disposable state fork at measured boundaries, implemented by swapping owned CPU snapshots into the shadow's GPU storage and restoring the persistent shadow afterward. There is one target model on GPU.
+
+The reference variant is **Qwen2.5-3B-Instruct**, with Qwen2 configuration H=2048, FFN=11008, 36 target layers, 16 attention heads, 2 KV heads and full V=151936. The pretrained FastGRPO draft has one decoder layer with EagleFS, feature/logit MLPs and norms. This is the upstream FastGRPO architecture, not the incompatible SpecForge EAGLE3 checkpoint format. The draft shares the requested target's frozen embedding and full output head. Strict state keys/shapes, companion `target_config.json`, model configuration and Qwen Instruct tokenizer special IDs are validated. Upstream pretraining does **not** export a tokenizer checksum: the manifest reports that provenance limit explicitly instead of claiming one exists. The current tokenizer files and actual rendering/token IDs are hashed.
+
+The default train shape is 8 unique train prompts × 8 responses = 64 trajectories **per learner**, independently sampled. Both draft accumulations, target accumulation and GRPO iteration count are exactly 1. Reference 3B production target accumulation is 4; this experiment deliberately overrides it to 1. It is not an accumulation-4 benchmark. Other architecture, LoRA (rank 64, alpha 32, dropout 0, attention + MLP projections), AdamW defaults, rewards, draft loss, sampler, proposal and tree defaults come from the audited reference.
+
+## Data and rendering
+
+Only official `simplelr_abel_level3to5/train.parquet` enters training. Only separate `test.parquet` enters evaluation. `prompt` messages take precedence over an optional raw `question` column; this matches the reference option-specific SimpleLR loader. Exactly one user message, string prompt, JSON-encoded messages or already-extracted question/answer rows are supported explicitly; ambiguous multi-user records fail. `reward_model.ground_truth` becomes a boxed answer. The reference math system/user prompt and Qwen chat template are retained. The upstream optional explicit-path loader can prefer raw `question`, and upstream's returned `DataCollator` accidentally passes the system text twice. The experiment consistently uses the intended math user template used by the actual training collator, avoiding those two alternate paths.
+
+Identity normalizes Unicode/whitespace and the known SimpleLR `Question: ... Answer: Let's think step by step.` presentation wrapper. Within-split duplicates retain the first row in file order and record every removed row; conflicting answers fail. Any cross-split normalized-question overlap fails without automatic deletion. At least 64 unique disjoint test questions are mandatory even in smoke mode. `random.Random(2026)` shuffles test rows once, saves exactly 64 IDs in `eval_subset_manifest.json`, and ordinary evaluations use the first 16 in that stored order. Changing data, tokenizer, template or subset on an existing run fails. Long training prompts fail explicitly instead of silently truncating supervision or changing the experiment's batch.
+
+## Completed optimizer boundary
+
+1. Select one batch of train IDs. At scheduled boundaries snapshot shadow weights, AdamW moments and pending gradients to CPU, and target LoRA to CPU. Rollout sampling uses separate deterministic streams for main and shadow and restores the training RNG.
+2. Generate production Reflex OPD with persistent R/A and rollout-local verification feedback, and pure production FastGRPO with S, under unchanged T_old. Only R produces reward/GRPO records. Decode only to score rewards; training token IDs are never reconstructed from decoded text.
+3. Update R and A exactly once, applying the analytical A gradient once at the reference draft optimizer boundary. Independently update S exactly once with its captured old teacher. Retain S's pre-update state for Fresh.
+4. Verify old-target replay against **all** captured shadow teacher features and their full-softmax CE distributions. Fail the boundary before target mutation if alignment exceeds tolerance. Evaluate `reflex_off/old` and `reflex_on/old` with that same frozen trained R/A.
+5. Execute exactly one actual target `optimizer.step()` on R's GRPO data; then increment `policy_step`. Nonuniform reward groups use the reference normalized rewards; zero-variance groups are excluded. If every group is excluded, still execute one LR=0 step, label zero drift and retain the fixed one-step iteration semantics. Explicit zero-update controls also temporarily use LR=0, protecting against AdamW momentum/weight decay changes. This control advances optimizer moments and is recorded as part of the trajectory. It is an intentional protocol difference from production's skip-all-groups behavior.
+6. Teacher-force T_new on the **saved old shadow contexts**. Recompute every hidden feature; the frozen full head applied to the new features gives the new full-softmax distribution used by the reference soft CE term. Neither accepted tokens, rewards, positions, masks nor packing order change. Fresh starts from S's pre-update weights/moments/gradients and the same update RNG as Stale. Fresh never generates a new training rollout.
+7. Evaluate `stale/new`, temporarily fork/train/evaluate `fresh/new`, and restore S. Evaluate `reflex_off/new` and `reflex_on/new` with exactly the R/A used in step 4. Suspend/restore modes, requires-grad flags, RNG and reusable cache objects; no evaluation optimizer or projector-gradient update occurs.
+8. Verify state identities, journal results, atomically commit the target/R/A/S/optimizers/sampler/RNG checkpoint and completed analysis schedule, then build deduplicated exports and completion markers. Unscheduled iterations perform no Fresh fork, replay gate or held-out evaluation.
+
+Default measurements are 20, 50, 100, 150, 200; 100 and 200 replace ordinary measurements with 64-prompt confirmations. Step 20 is a preregistered zero-update control, with later measurements observing ordinary GRPO updates. Set `--zero-update-steps` explicitly to change this choice. All schedule entries must be valid completed target steps and controls must be measured. Smoke defaults to two steps, two test prompts per boundary and a control at step 1; outputs are explicitly `research_result=false`.
+
+## Teacher alignment and mandatory gate
+
+For original unpadded prompt P and captured draft IDs D of length L:
+
+```text
+C = concatenate(P[:1], D)
+D[i] = C[i+1]
+H[i] = final normalized target decoder feature on C[:i+1], at position i
+teacher input = C[:-1]
+feature target for draft output i = H[i+1]
+CE target for draft output i = softmax(frozen_lm_head(H[i+1]))
+upstream loss mask i = (i >= len(P)) and (i < L-1)
+```
+
+Original first prompt tokens, prompt boundaries, unpadded context IDs, explicit positions, attention masks and loss masks are retained. Production's accepted-history gathering resolves padding gaps and branch indices. The replay gate validates that exact feature/index mapping, including roots/bonuses/EOS, using the original tree calls; native full-sequence replay is not assumed to match their numerical result. The shift and mask deliberately follow the reference, including its exclusion of the first generated draft-input position. `max_training_token` controls packing (draft threshold is 2× that value), not a cap on the total supervised tokens. No additional backward or optimizer step is introduced. The objective remains `2*SmoothL1 + 0.1*soft CE`, per-sequence normalization and actual reference packing.
+
+Teacher distributions are stored in **exact factored form**, captured hidden features plus a checksum-verified frozen full head, rather than allocating a huge trajectories×tokens×vocabulary tensor. The old gate compares the full distributions in chunks of 16 positions and records max/mean TV per example. Production Fresh replays the **original target forward shapes**: original prefill, saved tree token IDs, exact positions, sparse mask entries, original row removals, prefix crops and short KV suffix gathers. There is no sampler or draft proposal call during replay. Sparse mask/KV metadata avoids storing full attention matrices or KV snapshots. Only accepted, unpadded feature rows enter the draft loss; rejected nodes are present solely to preserve the original teacher attention layout. The full causal context/index mapping above is checked against those accepted IDs.
+
+A real Qwen3B pilot showed that a generic native full-sequence SDPA replay can differ strongly in some hidden coordinates from the manual incremental tree decoder. The initial gate refused to publish Fresh. The compact exact-call replay retains the same decoder/mask/cache arithmetic and avoids that layout mismatch; no tolerance was relaxed. The simpler full-causal replay remains only for isolated synthetic tests.
+
+Default BF16 hidden tolerance is `abs_error <= 0.125 + 0.05*abs(captured)` at every feature coordinate, and max full-softmax TV <= 0.02 at every position. These bounds allow tree-versus-causal SDPA/BF16 rounding, are not claims of bitwise equality, and can be tightened through CLI. Both checks include all valid prompt/response features. Empty supervision or mismatched accepted IDs fail loudly.
+
+For zero policy drift, after passing both replay gates, Fresh reuses the **captured verified labels** to remove replay roundoff. Runtime then requires identical stale/fresh feature and CE loss, gradient digest, updated weights and optimizer moments. Changed teacher labels are only trusted after the old gate passes. Tiny GPU tests exercise left padding, varying prompt lengths, actual accepted tree histories, bitwise exact-call replay, synthetic drift and the exact zero-drift update.
+
+## A2 and stopping/counter semantics
+
+OFF and ON call the same OPD kernel, never baseline FastGRPO. OFF sets only `opd_fast_lr=0`; each rollout starts B at zero. ON uses actual target verification feedback and transient B updates. Both use the same frozen R/A; A training and pending gradient accumulation are disabled. `B_fast` is full-vocabulary FP32, shared within one generation, reset before and cleared after generation, and excluded from checkpoints.
+
+Evaluation is serial **one prompt × one response**, so each generation gets independent B and a deterministic seed keyed by experiment seed, completed step, prompt ID and sample index 0. All six conditions receive the same seed mapping; equal seeds do not imply equal trajectories. Ordinary N=16 gives 96 responses; confirmation N=64 gives 384 responses. No train response replication is used for evaluation.
+
+The optional evaluation `max_new_tokens` extension is restricted to single-response evaluation. It clips the last accepted path **inside the verifier, before feedback selection, counters and history**, with a common cap (default 256). Training calls omit the option and retain the reference generation behavior. Proposals and target verification still run complete production trees; this is a response-length cap, not a strict bound on total GPU work. EOS handling remains the reference kernel's semantics. AAL is labeled length-capped.
+
+AAL is the production verification **accepted-length sum / response verification rounds**. In the reference, accepted length includes the mandatory target-sampled bonus/root contribution per round; initial prefill sampling is excluded. `accepted_proposal_tokens = accepted_length_sum - verification_rounds` is logged separately. Neither response length nor tree-node count substitutes for the denominator. Zero denominators fail.
+
+Target drift is mean/max TV between **full softmax, temperature 1, no top-p/top-k truncation**, on the same fixed held-out prompt-final contexts before/after update. This differs from the truncated temperature/top-p teacher used by online OPD feedback, and is labeled accordingly.
+
+## Statistics and outputs
+
+All six AALs are ratios of sums. The paired bootstrap resamples the same prompt clusters across every condition and recomputes the ratios, differences and difference of differences. It uses a private NumPy generator. N=16 intervals are exploratory; N=64 confirmation offers stronger evidence without a power guarantee. Reused prompts and policy steps are not independent replicates. The A2 interaction is incremental feedback benefit after target drift, not a causal proof of the whole production method.
+
+The scalar outputs are `A1_delta_lag`, `A2_gain_old`, `A2_gain_new`, `A2_drift_interaction`, and each has `_ci_low`/`_ci_high`. Six condition prefixes are `stale_new`, `fresh_new`, `reflex_off_old`, `reflex_on_old`, `reflex_off_new`, `reflex_on_new`, each with `_aal`, `_accepted_length_sum`, `_verification_rounds`. Additional fields include `eval_prompts`, `eval_trajectories`, `evidence_label`, `teacher_policy_tv_full_softmax`, `teacher_policy_tv_max`, target hashes, zero-drift flag, replay gate errors and both draft loss components.
+
+`analysis/manifest.json` freezes config, input/source hashes, reference differences and execution environment. `eval_subset_manifest.json` includes full split provenance and ordered test selection. Each boundary has `alignment_gate.json`, an exact CPU `shadow_sequences.pt` trace with old/new teacher features, a scalar/raw result journal and a completion marker. Per-response logs include actual IDs, seeds, accepted/proposed counters, target/draft/A/head hashes, OPD feedback counts/B norms, runtime and peak CUDA allocation. Final exports are rebuilt from committed journals. Checkpoints include the shared target adapter+optimizer, R/A+optimizer, S+optimizer, gradient buffers, sampler order/cursor/epoch, completed steps, training prompt IDs and Python/NumPy/torch CPU/CUDA RNG. Full base target weights are read from the checksum-verified model input; B is never persisted.
+
+Reference OPD uses FP32 atomic addition. Resume is tested for bitwise target/shadow/RNG and generated token/counter equivalence; A optimizer moments are compared at rtol=3e-6, atol=1e-12 for atomic-order rounding. A digest is an exact identity, not a floating-point tolerance claim. Reproducibility across different hardware/compiler versions is not asserted.

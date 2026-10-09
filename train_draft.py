@@ -1,603 +1,167 @@
-import sys
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-import pandas as pd
-from transformers import AutoTokenizer, AutoProcessor,AutoConfig,AutoModelForCausalLM
-from helper.modeling_draft import Model
-import torch
-import datasets
-import os
-
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-from torch import nn
-import time
-import importlib.util
-
-from torch.utils.data import DataLoader, Dataset, Sampler
-import numpy as np
-from tqdm import tqdm
-from torch.nn.attention import SDPBackend, sdpa_kernel
-import datasets
-from transformers import get_cosine_schedule_with_warmup,get_scheduler
-from transformers import DynamicCache
-import json
-import pandas as pd
-import re
-import signal
-import torch
+"""FastGRPO ShareGPT pretraining with SpecNaacl paths and resumable checkpoints."""
 import argparse
-
-
-def handle_signal(signum, frame):
-    print("Received signal, cleaning up...")
-    if torch.cuda.is_available():
-        del model
-        torch.cuda.empty_cache()
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, handle_signal)
-signal.signal(signal.SIGINT, handle_signal)
-
-
-def _dtype_from_name(name):
-    name = str(name or "auto").lower()
-    if name == "auto":
-        return "auto"
-    if name == "bf16":
-        return torch.bfloat16
-    if name == "fp16":
-        return torch.float16
-    if name == "fp32":
-        return torch.float32
-    raise ValueError(f"Unsupported dtype={name}")
-
-
-def _resolve_attn_implementation(requested):
-    requested = str(requested or "")
-    if not requested:
-        return None
-    if requested == "flash_attention_2" and importlib.util.find_spec("flash_attn") is None:
-        print(
-            "Warning: attn_implementation=flash_attention_2 was requested, "
-            "but flash_attn is not installed. Falling back to eager."
-        )
-        return "eager"
-    return requested
-
-
-def _as_bool(value):
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
-
-
-def _atomic_torch_save(state, path):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(path.name + ".tmp")
-    torch.save(state, tmp_path)
-    os.replace(tmp_path, path)
-
-
-def _prune_checkpoints(checkpoint_dir, keep_last):
-    keep_last = int(keep_last or 0)
-    if keep_last <= 0:
-        return
-    checkpoint_dir = Path(checkpoint_dir)
-    checkpoints = sorted(checkpoint_dir.glob("step*.pt"), key=lambda p: p.stat().st_mtime)
-    for old_path in checkpoints[:-keep_last]:
-        old_path.unlink(missing_ok=True)
-
-
-def save_training_checkpoint(
-    checkpoint_dir,
-    *,
-    model,
-    optimizer,
-    lr_scheduler,
-    epoch,
-    next_batch,
-    step,
-    accumulated_step,
-    total_correct_top1,
-    total_correct_topk,
-    total_token_nums,
-    batch_logs,
-    keep_last,
-):
-    checkpoint_dir = Path(checkpoint_dir)
-    state = {
-        "format": "fastgrpo_draft_checkpoint_v1",
-        "epoch": int(epoch),
-        "next_batch": int(next_batch),
-        "step": int(step),
-        "accumulated_step": int(accumulated_step),
-        "draft_model": model.draft_model.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "lr_scheduler": lr_scheduler.state_dict(),
-        "total_correct_top1": list(total_correct_top1),
-        "total_correct_topk": list(total_correct_topk),
-        "total_token_nums": list(total_token_nums),
-        "batch_logs": list(batch_logs),
-        "rng_state": torch.random.get_rng_state(),
-        "cuda_rng_state_all": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
-    }
-    checkpoint_path = checkpoint_dir / f"step{int(step)}_epoch{int(epoch) + 1}_batch{int(next_batch)}.pt"
-    _atomic_torch_save(state, checkpoint_path)
-    _atomic_torch_save(state, checkpoint_dir / "latest.pt")
-    _prune_checkpoints(checkpoint_dir, keep_last)
-    print(f"Saved draft checkpoint: {checkpoint_path}")
-    return checkpoint_path
-
-
-def load_training_checkpoint(path, *, model, optimizer, lr_scheduler):
-    checkpoint = torch.load(path, map_location="cpu")
-    model.draft_model.load_state_dict(checkpoint["draft_model"])
-    optimizer.load_state_dict(checkpoint["optimizer"])
-    lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-    if checkpoint.get("rng_state") is not None:
-        torch.random.set_rng_state(checkpoint["rng_state"])
-    if torch.cuda.is_available() and checkpoint.get("cuda_rng_state_all") is not None:
-        torch.cuda.set_rng_state_all(checkpoint["cuda_rng_state_all"])
-    return checkpoint
-
-
-
-parser = argparse.ArgumentParser(description="Training configuration") 
-parser.add_argument('--model_dir',type=str,) 
-parser.add_argument('--version_name', type=str,help='Version name for saving checkpoints')
-parser.add_argument('--model_type',type=str,default='qwen2')
-parser.add_argument('--dtype', type=str, default='auto', choices=['auto', 'bf16', 'fp16', 'fp32'])
-parser.add_argument('--attn_implementation', type=str, default='')
-parser.add_argument('--batch_size', type=int, default=1)
-parser.add_argument('--num_epochs', type=int, default=10)
-parser.add_argument('--lr', type=float, default=1e-4)
-parser.add_argument('--accumulation_steps', type=int, default=16)
-parser.add_argument('--warmup_ratio', type=float, default=0.05)
-parser.add_argument('--sample_num', type=int, default=200)
-parser.add_argument('--max_seq_len', type=int, default=4096)
-parser.add_argument('--num_workers', type=int, default=4)
-parser.add_argument('--persistent_workers', default=True)
-parser.add_argument('--log_dir',type=str,required=True)
-parser.add_argument('--saved_model_dir',type=str,required=True)
-parser.add_argument('--dataset_dir',type=str,required=True)
-parser.add_argument('--checkpoint_dir', type=str, default='')
-parser.add_argument('--save_checkpoint_steps', type=int, default=0)
-parser.add_argument('--keep_last_checkpoints', type=int, default=3)
-parser.add_argument('--resume_checkpoint', type=str, default='')
-
-args = parser.parse_args()
-model_dir=args.model_dir
-version_name=args.version_name
-batch_size = args.batch_size
-num_epochs = args.num_epochs
-lr = args.lr
-accumulation_steps = args.accumulation_steps
-warmup_ratio = args.warmup_ratio
-sample_num = args.sample_num
-max_seq_len = args.max_seq_len
-num_workers = args.num_workers
-persistent_workers = _as_bool(args.persistent_workers)
-log_dir=args.log_dir
-saved_model_dir=args.saved_model_dir
-dataset_dir = args.dataset_dir
-checkpoint_dir = args.checkpoint_dir or os.path.join(saved_model_dir, "checkpoints")
-save_checkpoint_steps = int(args.save_checkpoint_steps or 0)
-keep_last_checkpoints = int(args.keep_last_checkpoints or 0)
-resume_checkpoint = args.resume_checkpoint
-model_torch_dtype = _dtype_from_name(args.dtype)
-attn_impl = _resolve_attn_implementation(args.attn_implementation)
-
-if not os.path.exists(saved_model_dir):
-    os.makedirs(saved_model_dir)
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-if checkpoint_dir:
-    os.makedirs(checkpoint_dir, exist_ok=True)
-
-print(version_name,os.getenv('CUDA_VISIBLE_DEVICES'))
-
-with open(dataset_dir,'r',encoding='utf-8') as f:
-    sharegpt_dataset=json.load(f)
-df=pd.DataFrame(sharegpt_dataset)
-dataset=datasets.Dataset.from_pandas(df)
-print(dataset)
-
-target_config=AutoConfig.from_pretrained(model_dir)
-if model_torch_dtype != "auto":
-    target_config.torch_dtype = model_torch_dtype
-model_type=args.model_type
-target_model = AutoModelForCausalLM.from_pretrained(
-    model_dir, torch_dtype=model_torch_dtype, config=target_config, attn_implementation=attn_impl)
-target_model.eval()
-
-config=AutoConfig.from_pretrained(model_dir)
-config.rope_scaling=None
-config.num_hidden_layers=1
-if model_torch_dtype != "auto":
-    config.torch_dtype = model_torch_dtype
-model=Model(config, target_model=target_model).cuda()
-tokenizer = AutoTokenizer.from_pretrained(model_dir, padding_side = "right")
-
-count=0
-for param in model.parameters():
-    if param.requires_grad==True:
-        print(param.shape)
-        count+=param.numel()
-        
-print(count/1000/1000,'M')
-
-
-class DataCollator:
-    def __init__(self, tokenizer, max_length=4096):
-        self.tokenizer=tokenizer
-        self.max_length=max_length
-        
-    def __call__(self, batch):
-        batch_input_ids=[]
-        batch_attention_mask=[]
-        batch_loss_mask=[]
-        max_length=0
-        
-        for example in batch:
-            
-            input_ids=[]
-            attention_mask=[]
-            loss_mask=[]
-            
-            if model_type == 'qwen2':
-                text='<|im_start|>'+'system'+'\n'+'You are a helpful assistant.'+'<|im_end|>'+'\n'
-            elif model_type == 'llama':
-                text= '<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n'+'You are a helpful assistant.'+'<|eot_id|>'
-            elif model_type == 'deepseek':
-                text = "<｜begin▁of▁sentence｜>You are a helpful assistant."
-            the_input_ids=self.tokenizer.encode(text,add_special_tokens=False)
-            input_ids+=the_input_ids
-            attention_mask+=[1]*len(the_input_ids)
-            loss_mask+=[0]*len(the_input_ids)
-
-            for idx, conversation in enumerate(example['conversations']):
-                role=conversation['from']
-                content=conversation['value']
-                if role == 'human':
-                    role = 'user'
-                if role == 'gpt':
-                    role = 'assistant'
-                
-                if model_type == 'qwen2':
-                    text='<|im_start|>'+role+'\n'+content+'<|im_end|>'+'\n'
-                elif model_type == 'llama':
-                    text='<|start_header_id|>'+role+'<|end_header_id|>\n\n'+content+'<|eot_id|>'
-                elif model_type == 'deepseek':
-                    if role == 'user':
-                        text = "<｜User｜>" + content
-                    else:
-                        text = "<｜Assistant｜>" + content + "<｜end▁of▁sentence｜>"
-                the_input_ids=self.tokenizer.encode(text,add_special_tokens=False)
-                input_ids+=the_input_ids
-                attention_mask+=[1]*len(the_input_ids)
-
-                if role == 'assistant' or role == 'ASSISTANT':
-                    loss_mask+=[1]*len(the_input_ids)
-                else:
-                    loss_mask+=[0]*len(the_input_ids)
-
-
-            batch_input_ids.append(input_ids)
-            batch_attention_mask.append(attention_mask)
-            batch_loss_mask.append(loss_mask)
-            max_length=max(max_length,len(input_ids))
-
-        max_length=min(max_length,self.max_length)
-        for idx in range(len(batch)):
-            if len(batch_input_ids[idx])>=max_length:
-                batch_input_ids[idx]=batch_input_ids[idx][:max_length]
-                batch_attention_mask[idx]=batch_attention_mask[idx][:max_length]
-                batch_loss_mask[idx]=batch_loss_mask[idx][:max_length]
-            
-            else:
-                the_length=len(batch_input_ids[idx])
-                batch_input_ids[idx]=batch_input_ids[idx]+[self.tokenizer.eos_token_id]*(max_length-the_length)
-                batch_attention_mask[idx]=batch_attention_mask[idx]+[0]*(max_length-the_length)
-                batch_loss_mask[idx]=batch_loss_mask[idx]+[0]*(max_length-the_length)
-        
-        return {
-            'input_ids':torch.tensor(batch_input_ids),
-            'attention_mask':torch.tensor(batch_attention_mask),
-            'loss_mask':torch.tensor(batch_loss_mask)
-        }
-
-
-datacollator=DataCollator(tokenizer, max_length=max_seq_len)
-dataloader=DataLoader(
-    dataset,
-    collate_fn=datacollator,
-    num_workers=num_workers,
-    persistent_workers=persistent_workers and num_workers > 0,
-    batch_size=batch_size,
-    shuffle=True,
-    drop_last=False,
-)
-
-
-def compute_acc(target_logits,draft_logits,valid_positions,k=2):
-
-    target_indices = torch.argmax(target_logits, dim=-1)
-    draft_topk_values, draft_topk_indices = torch.topk(draft_logits, k=k, dim=-1)
-
-    top1_hit = draft_topk_indices[..., 0] == target_indices             
-    topk_hit = (draft_topk_indices == target_indices.unsqueeze(-1)).any(dim=-1) 
-
-    correct_top1 = (top1_hit & valid_positions).sum().item()
-    correct_topk = (topk_hit & valid_positions).sum().item()
-    total_valid_tokens = valid_positions.sum().item()
-    
-    return correct_top1,correct_topk,total_valid_tokens
-
-def compute_normalized_gradient_l2_norm(model):
-    gradient_l2_norm = torch.norm(
-        torch.cat([param.grad.view(-1) for param in model.parameters() if param.grad is not None])
-    )
-    num_grad_params = sum(
-        param.grad.numel() for param in model.parameters() if param.grad is not None
-    )
-    normalized_gradient_l2_norm = gradient_l2_norm / num_grad_params
-    
-    return normalized_gradient_l2_norm
-
-optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-l1_loss=nn.SmoothL1Loss(reduction='none')
-
-num_training_steps = num_epochs * ((len(dataloader)+accumulation_steps-1)//accumulation_steps)
-num_warmup_steps = min(int(warmup_ratio * num_training_steps), 500)
-print(num_training_steps)
-lr_scheduler = get_scheduler(
-    name="cosine_with_min_lr",
-    optimizer=optimizer,
-    num_warmup_steps=num_warmup_steps,
-    num_training_steps=num_training_steps,
-    scheduler_specific_kwargs={'min_lr_rate':0.0}, 
-)
-
-total_correct_top1=[]
-total_correct_topk=[]
-total_token_nums=[]
-
-step=0
-accumulated_step=0
-batch_logs=[]
-start_time=time.time()
-start_epoch = 0
-start_batch = 0
-last_checkpoint_step = -1
-
-if resume_checkpoint:
-    checkpoint = load_training_checkpoint(
-        resume_checkpoint,
-        model=model,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
-    )
-    step = int(checkpoint.get("step", 0))
-    accumulated_step = int(checkpoint.get("accumulated_step", step * accumulation_steps))
-    total_correct_top1 = list(checkpoint.get("total_correct_top1", []))
-    total_correct_topk = list(checkpoint.get("total_correct_topk", []))
-    total_token_nums = list(checkpoint.get("total_token_nums", []))
-    batch_logs = list(checkpoint.get("batch_logs", []))
-    start_epoch = int(checkpoint.get("epoch", 0))
-    start_batch = int(checkpoint.get("next_batch", 0))
-    last_checkpoint_step = step
-    print(
-        f"Resumed draft checkpoint {resume_checkpoint}: "
-        f"epoch={start_epoch + 1}, next_batch={start_batch}, step={step}"
-    )
-
-epoch_bar = tqdm(range(start_epoch, num_epochs), desc="Draft epoch", dynamic_ncols=True)
-for epoch in epoch_bar:
-
-    log_file = log_dir + f"/epoch_{epoch}.log"
-    log_mode = "a" if resume_checkpoint and epoch == start_epoch else "w"
-    with open(log_file, log_mode, encoding='utf-8') as f:
-        pass
-
-    batch_bar = tqdm(
-        dataloader,
-        total=len(dataloader),
-        desc=f"Draft epoch {epoch + 1}/{num_epochs}",
-        dynamic_ncols=True,
-        leave=False,
-    )
-    for i,batch in enumerate(batch_bar):
-        if epoch == start_epoch and i < start_batch:
-            batch_bar.set_postfix(step=step, phase="resume_skip", refresh=False)
-            continue
-
-        input_ids=batch['input_ids'].to('cuda')
-        attention_mask=batch['attention_mask'].to('cuda')
-        loss_mask=batch['loss_mask'].to('cuda')
-        
-        if not torch.any(loss_mask==1):
-            batch_bar.set_postfix(step=step, phase="skip_empty_mask", refresh=False)
-            continue
-        
-        with torch.no_grad():
-            target_outputs=model.target_model.model(input_ids=input_ids,
-                                            attention_mask=attention_mask,
-                                            output_hidden_states=False)
-
-            last_hidden_state=target_outputs.last_hidden_state
-            feature_states=last_hidden_state
-            target_logits=model.target_model.lm_head(last_hidden_state)
-
-        
-        target_logits=target_logits[:,:-1,:]
-        feature_states=feature_states[:,:-1,:].to(model.dtype)
-
-        input_ids=input_ids[:,1:]
-        attention_mask=attention_mask[:,:-1]
-        loss_mask=loss_mask[:,:-1]
-
-        draft_outputs=model(hidden_states=feature_states,input_ids=input_ids,attention_mask=attention_mask,use_cache=False)
-        next_feature_states=draft_outputs['next_feature_states']
-        draft_hidden_states=draft_outputs['hidden_states'].to(model.target_model.dtype)
-        draft_logits=model.lm_head(draft_hidden_states)
-
-        loss1=l1_loss(next_feature_states[:,:-1,:].float(),feature_states[:,1:,:].float())
-
-        loss1=torch.mean(loss1,dim=-1)*loss_mask[:,:-1] 
-        loss1=torch.sum(loss1, dim=-1) / torch.sum(loss_mask[:,:-1], dim=-1)
-        loss1=loss1.mean()
-        loss1=loss1*2
-
-        with torch.no_grad():
-            target_logits=target_logits[:,1:,:].float().softmax(dim=-1).detach()
-        draft_logits=draft_logits[:,:-1,:].float().softmax(dim=-1)
-
-        plogp=target_logits*torch.log(draft_logits)
-        loss2=torch.sum(plogp,dim=-1)*loss_mask[:,:-1]
-        loss2=torch.sum(loss2, dim=-1) / torch.sum(loss_mask[:,:-1], dim=-1)
-        loss2= - loss2.mean()
-
-        loss2=loss2*0.1
-        
-        loss=loss1+loss2
-        
-        if torch.isnan(loss).any() or torch.isinf(loss).any():
-            if feature_states.grad is not None:
-                feature_states.grad.zero_()
-            
-            loss = loss.detach()
-            del loss
-            del feature_states,next_feature_states,target_logits,draft_logits
-            torch.cuda.empty_cache()
-        
-        else:
-            accumulated_step+=1
-            
-            if accumulated_step%accumulation_steps==1: 
-                
-                optimizer.zero_grad(set_to_none=True)
-                loss2.backward(retain_graph=True)
-                loss2_norm=compute_normalized_gradient_l2_norm(model.draft_model.layers[0])
-                optimizer.zero_grad(set_to_none=True)
-                
-                loss1.backward(retain_graph=True)
-                loss1_norm=compute_normalized_gradient_l2_norm(model.draft_model.layers[0])
-                optimizer.zero_grad(set_to_none=True)
-            
-            
-            loss/=accumulation_steps
-            loss.backward()
-
-            valid_positions=loss_mask[:,:-1]
-            with torch.no_grad():
-                correct_top1,correct_topk,total_valid_tokens=compute_acc(target_logits,draft_logits,valid_positions,k=2)
-            
-            total_correct_top1.append(correct_top1)
-            total_correct_topk.append(correct_topk)
-            total_token_nums.append(total_valid_tokens)
-
-            batch_logs.append({
-                'loss':loss.item()*accumulation_steps,
-                'loss1':loss1.item(),
-                'loss2':loss2.item(),
-                'loss1_norm':loss1_norm.item(),
-                'loss2_norm':loss2_norm.item(),
-                'correct_top1':correct_top1,
-                'correct_topk':correct_topk,
-                'total_valid_tokens':total_valid_tokens
-            })
-        
-            if accumulated_step%accumulation_steps==0:
-                step+=1
-                real_sample_num=sample_num*accumulation_steps
-
-                avg_logs = {
-                    "step": step,
-                    "loss": round(sum(log["loss"] for log in batch_logs)/len(batch_logs),4),
-                    "used_time": round((time.time()-start_time)/60, 3),
-                    "loss1": round(sum(log["loss1"] for log in batch_logs)/len(batch_logs),4),
-                    "loss2": round(sum(log["loss2"] for log in batch_logs)/len(batch_logs),4),
-                    "loss1_norm": sum(log["loss1_norm"] for log in batch_logs),
-                    "loss2_norm": sum(log["loss2_norm"] for log in batch_logs),
-                    "top1_acc": round(sum(log['correct_top1'] for log in batch_logs)/sum(log['total_valid_tokens'] for log in batch_logs),4),
-                    "topk_acc": round(sum(log['correct_topk'] for log in batch_logs)/sum(log['total_valid_tokens'] for log in batch_logs),4),
-                    f"last{sample_num}_top1_acc": round(sum(total_correct_top1[-real_sample_num:])/sum(total_token_nums[-real_sample_num:]),4),
-                    f"last{sample_num}_topk_acc": round(sum(total_correct_topk[-real_sample_num:])/sum(total_token_nums[-real_sample_num:]),4),
-                }
-                
-                with open(log_file, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(avg_logs) + '\n')
-
-                postfix = {
-                    "step": step,
-                    "loss": avg_logs["loss"],
-                    "top1": avg_logs["top1_acc"],
-                    "topk": avg_logs["topk_acc"],
-                    "lr": f"{lr_scheduler.get_last_lr()[0]:.2e}",
-                }
-                batch_bar.set_postfix(postfix, refresh=False)
-                epoch_bar.set_postfix(postfix, refresh=False)
-
-                total_correct_top1=total_correct_top1[-real_sample_num:]
-                total_correct_topk=total_correct_topk[-real_sample_num:]
-                total_token_nums=total_token_nums[-real_sample_num:]
-                    
-                batch_logs.clear()
-                
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad(set_to_none=True)
-                
-                if step%8000==0 and step!=0:
-                    model.save_model(f'{saved_model_dir}/step{step}.pth')
-
-                if (
-                    save_checkpoint_steps > 0
-                    and step > 0
-                    and step % save_checkpoint_steps == 0
-                    and step != last_checkpoint_step
-                ):
-                    save_training_checkpoint(
-                        checkpoint_dir,
-                        model=model,
-                        optimizer=optimizer,
-                        lr_scheduler=lr_scheduler,
-                        epoch=epoch,
-                        next_batch=i + 1,
-                        step=step,
-                        accumulated_step=accumulated_step,
-                        total_correct_top1=total_correct_top1,
-                        total_correct_topk=total_correct_topk,
-                        total_token_nums=total_token_nums,
-                        batch_logs=batch_logs,
-                        keep_last=keep_last_checkpoints,
-                    )
-                    last_checkpoint_step = step
-                
-                if (step*accumulation_steps)%16==0:
-                    torch.cuda.empty_cache()
-    
-
-model.save_model(f'{saved_model_dir}/step{step}.pth')
-if checkpoint_dir:
-    save_training_checkpoint(
-        checkpoint_dir,
-        model=model,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
-        epoch=num_epochs,
-        next_batch=0,
-        step=step,
-        accumulated_step=accumulated_step,
-        total_correct_top1=total_correct_top1,
-        total_correct_topk=total_correct_topk,
-        total_token_nums=total_token_nums,
-        batch_logs=batch_logs,
-        keep_last=keep_last_checkpoints,
-    )
+from copy import deepcopy
+import json
+import os
+from pathlib import Path
+import random
+import time
+import numpy as np
+import torch
+import torch.distributed as dist
+from torch.utils.data import DataLoader, DistributedSampler
+from tqdm.auto import tqdm
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, get_scheduler
+from helper.fastgrpo_model import FastGRPOModel
+from helper.pretrain_data import DataCollator
+from helper.checkpointing import capture_rng_state, restore_rng_state
+
+
+def pretrain_loss(model, batch):
+    """Exact slices, assistant mask, per-sequence mean, and softmax/log of upstream."""
+    input_ids, attention_mask, loss_mask=(batch[k].to(model.device) for k in ('input_ids','attention_mask','loss_mask'))
+    with torch.no_grad():
+        outputs=model.target_model.model(input_ids=input_ids,attention_mask=attention_mask,output_hidden_states=False)
+        feature_states=outputs.last_hidden_state
+        target_logits=model.target_model.lm_head(feature_states)[:,:-1,:]
+    feature_states=feature_states[:,:-1,:].to(model.dtype)
+    input_ids=input_ids[:,1:];attention_mask=attention_mask[:,:-1];loss_mask=loss_mask[:,:-1]
+    outputs=model(hidden_states=feature_states,input_ids=input_ids,attention_mask=attention_mask,use_cache=False)
+    next_feature_states=outputs['next_feature_states']
+    draft_logits=model.lm_head(outputs['hidden_states'].to(model.target_model.dtype))
+    loss1=torch.nn.functional.smooth_l1_loss(next_feature_states[:,:-1,:].float(),feature_states[:,1:,:].float(),reduction='none')
+    loss1=torch.mean(loss1,dim=-1)*loss_mask[:,:-1]
+    loss1=torch.sum(loss1,dim=-1)/torch.sum(loss_mask[:,:-1],dim=-1)
+    loss1=loss1.mean()*2.0
+    with torch.no_grad():target_logits=target_logits[:,1:,:].float().softmax(dim=-1).detach()
+    draft_logits=draft_logits[:,:-1,:].float().softmax(dim=-1)
+    loss2=torch.sum(target_logits*torch.log(draft_logits),dim=-1)*loss_mask[:,:-1]
+    loss2=torch.sum(loss2,dim=-1)/torch.sum(loss_mask[:,:-1],dim=-1)
+    loss2=-loss2.mean()*0.1
+    return loss1,loss2
+
+
+def atomic_save(payload,path):
+    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
+    tmp=path.with_suffix(path.suffix+'.tmp');torch.save(payload,tmp);tmp.replace(path)
+
+
+def main(argv=None):
+    p=argparse.ArgumentParser(description=__doc__)
+    for name in ('model_dir','dataset_dir','saved_model_dir','log_dir'):p.add_argument('--'+name,required=True)
+    p.add_argument('--version_name',default='fastgrpo-pretrain')
+    p.add_argument('--model_type',default='qwen2');p.add_argument('--num_epochs',type=int,default=5)
+    p.add_argument('--batch_size',type=int,default=4);p.add_argument('--accumulation_steps',type=int,default=1)
+    p.add_argument('--lr',type=float,default=5e-5);p.add_argument('--warmup_ratio',type=float,default=.05)
+    p.add_argument('--max_length',type=int,default=2048);p.add_argument('--max_samples',type=int,default=0)
+    p.add_argument('--num_workers',type=int,default=4);p.add_argument('--seed',type=int,default=42)
+    p.add_argument('--save_interval',type=int,default=500);p.add_argument('--resume',default='')
+    p.add_argument('--max_steps',type=int,default=0,help='Stop after this optimizer step, save resumable state; 0 means all epochs')
+    p.add_argument('--model_output_root',default='');p.add_argument('--dtype',default='bf16',choices=['bf16','fp16','fp32','auto'])
+    p.add_argument('--attn_implementation',default='sdpa')
+    a=p.parse_args(argv)
+    if min(a.batch_size,a.accumulation_steps,a.num_epochs,a.max_length,a.save_interval)<1: p.error('positive training settings required')
+    rank=int(os.environ.get('RANK',0));world=int(os.environ.get('WORLD_SIZE',1))
+    torch.cuda.set_device(int(os.environ.get('LOCAL_RANK',0)))
+    if world>1:dist.init_process_group('nccl')
+    random.seed(a.seed);np.random.seed(a.seed);torch.manual_seed(a.seed)
+    config=AutoConfig.from_pretrained(a.model_dir)
+    dtype={'bf16':torch.bfloat16,'fp16':torch.float16,'fp32':torch.float32,'auto':'auto'}[a.dtype]
+    target=AutoModelForCausalLM.from_pretrained(a.model_dir,torch_dtype=dtype,attn_implementation=a.attn_implementation).cuda().eval()
+    config=deepcopy(config);config.num_hidden_layers=1;config.rope_scaling=None;config.torch_dtype=target.dtype
+    model=FastGRPOModel(config,target).cuda()
+    tokenizer=AutoTokenizer.from_pretrained(a.model_dir,padding_side='right')
+    data=json.loads(Path(a.dataset_dir).read_text())
+    if a.max_samples:data=data[:a.max_samples]
+    sampler=DistributedSampler(data,num_replicas=world,rank=rank,shuffle=True,seed=a.seed)
+    # A separate generator prevents iterator construction on resume from consuming model RNG.
+    loader=DataLoader(data,batch_size=a.batch_size,sampler=sampler,
+        collate_fn=DataCollator(tokenizer,a.max_length,a.model_type),num_workers=a.num_workers,
+        persistent_workers=a.num_workers>0,generator=torch.Generator().manual_seed(a.seed))
+    optimizer=torch.optim.AdamW(model.parameters(),lr=a.lr)
+    total_steps=a.num_epochs*((len(loader)+a.accumulation_steps-1)//a.accumulation_steps)
+    scheduler=get_scheduler('cosine_with_min_lr',optimizer=optimizer,
+        num_warmup_steps=min(int(a.warmup_ratio*total_steps),500),num_training_steps=total_steps,
+        scheduler_specific_kwargs={'min_lr_rate':0.})
+    output=Path(a.saved_model_dir);logs=Path(a.log_dir)
+    output.mkdir(parents=True,exist_ok=True);logs.mkdir(parents=True,exist_ok=True)
+    latest=output/(a.version_name+'-latest');latest.mkdir(exist_ok=True)
+    step=accumulated=epoch_start=batch_start=0
+    optimizer.zero_grad(set_to_none=True)
+    if a.resume:
+        path=latest/'training_state.pt' if a.resume=='auto' else Path(a.resume)
+        if path.is_dir():path=path/'training_state.pt'
+        if path.exists():
+            state=torch.load(path,map_location='cpu',weights_only=False)
+            if state['world_size']!=world:raise ValueError('resume world size mismatch')
+            model.draft_model.load_state_dict(state['draft_model'])
+            optimizer.load_state_dict(state['optimizer']);scheduler.load_state_dict(state['scheduler'])
+            step,accumulated,epoch_start,batch_start=(state[k] for k in ('step','accumulated','epoch','next_batch'))
+            local=state['ranks'][rank]
+            for name,param in model.draft_model.named_parameters():
+                if name in local['gradients']:param.grad=local['gradients'][name].to(param.device)
+            restore_rng_state(local['rng'])
+        elif a.resume!='auto':raise FileNotFoundError(path)
+    def save(epoch,next_batch):
+        local=dict(rng=capture_rng_state(),gradients={n:p.grad.cpu() for n,p in model.draft_model.named_parameters() if p.grad is not None})
+        ranks=[None]*world
+        if world>1:dist.all_gather_object(ranks,local)
+        else:ranks=[local]
+        if rank:return
+        weights={'draft_model':model.draft_model.state_dict()}
+        atomic_save(weights,output/f'step{step}.pth');atomic_save(weights,latest/'draft.pth')
+        atomic_save(dict(**weights,optimizer=optimizer.state_dict(),scheduler=scheduler.state_dict(),
+            step=step,accumulated=accumulated,epoch=epoch,next_batch=next_batch,world_size=world,ranks=ranks),latest/'training_state.pt')
+        # Full target config supplies vocabulary/head dimensions for the proposal tuner.
+        target.config.to_json_file(latest/'target_config.json')
+        if a.model_output_root:
+            root=Path(a.model_output_root);root.mkdir(parents=True,exist_ok=True)
+            for name,destination in [('latest_checkpoint',latest),('latest_target_config.json',latest/'target_config.json')]:
+                link=root/name;temporary=root/(name+'.tmp')
+                temporary.unlink(missing_ok=True);temporary.symlink_to(destination.resolve());temporary.replace(link)
+    start=time.perf_counter()
+    progress_disabled=rank!=0 or os.environ.get('TQDM_DISABLE','').strip().lower() in {'1','true','yes','on'}
+    for epoch in range(epoch_start,a.num_epochs):
+        sampler.set_epoch(epoch)
+        progress=tqdm(enumerate(loader),total=len(loader),desc=f'Pretrain epoch {epoch+1}/{a.num_epochs}',
+                      unit='batch',dynamic_ncols=True,disable=progress_disabled)
+        for i,batch in progress:
+            if epoch==epoch_start and i<batch_start:continue
+            has_labels=torch.any(batch['loss_mask']==1).to(device=model.device,dtype=torch.int32)
+            if world>1:dist.all_reduce(has_labels,op=dist.ReduceOp.MIN)
+            if not has_labels:continue
+            loss1,loss2=pretrain_loss(model,batch);loss=loss1+loss2
+            valid=torch.isfinite(loss).to(torch.int32)
+            if world>1:dist.all_reduce(valid,op=dist.ReduceOp.MIN)
+            if not valid:continue
+            accumulated+=1;(loss/a.accumulation_steps).backward()
+            if accumulated%a.accumulation_steps:continue
+            if world>1:
+                for param in model.draft_model.parameters():
+                    if param.grad is not None:dist.all_reduce(param.grad);param.grad.div_(world)
+            optimizer.step();scheduler.step();optimizer.zero_grad(set_to_none=True);step+=1
+            if rank==0:
+                row=dict(step=step,epoch=epoch,batch=i,loss=float(loss.detach()),loss1=float(loss1.detach()),loss2=float(loss2.detach()),wall_time_s=time.perf_counter()-start)
+                progress.set_postfix(step=step,loss=f"{row['loss']:.4f}",
+                    feature=f"{row['loss1']:.4f}",ce=f"{row['loss2']:.4f}",
+                    lr=f"{optimizer.param_groups[0]['lr']:.2e}",refresh=False)
+                for filename in ('metrics.jsonl',f'epoch_{epoch}.log'):
+                    with (logs/filename).open('a') as f:f.write(json.dumps(row)+'\n')
+            if step%a.save_interval==0:save(epoch,i+1)
+            if a.max_steps>0 and step>=a.max_steps:
+                if not progress_disabled:
+                    progress.n=i+1
+                    progress.refresh()
+                progress.close()
+                save(epoch,i+1)
+                if world>1:dist.destroy_process_group()
+                return
+        progress.close()
+        batch_start=0
+    save(a.num_epochs,0)
+    if rank==0:
+        (output/'pretrain_complete.json').write_text(json.dumps(dict(step=step,epochs=a.num_epochs,target_model_path=str(Path(a.model_dir).resolve())))+'\n')
+    if world>1:dist.destroy_process_group()
+
+
+if __name__=='__main__':main()

@@ -1,0 +1,49 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/434 [00:00<?, ?it/s]Loading weights: 100%|██████████| 434/434 [00:00<00:00, 11577.34it/s]
+/mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_reflex.py:180: UserWarning: No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.
+  warnings.warn('No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.')
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 151936
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+/mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_reflex.py:180: UserWarning: No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.
+  warnings.warn('No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.')
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 151936
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 151936
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 151936
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 151936
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+{"policy_step": 1, "measured": true, "zero_drift": true, "target_trajectories": 0, "wall_s": 117.48211151268333}
+{
+  "policy_step": 1,
+  "completed_analysis_steps": [
+    1
+  ],
+  "checkpoint": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/qwen3b_final_smoke/checkpoints/latest.pt"
+}

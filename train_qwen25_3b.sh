@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
+# Retired experiment name forwards only to SimpleLR A1/A2.
 set -euo pipefail
-
-MODEL_KEY="qwen25_3b"
-MODEL="${MODEL:-/workspace/storage-shared/models/Qwen2.5-3B-Instruct}"
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/scripts/launch/train_model.sh"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bash "$PROJECT_DIR/run_policy_lag_motivation.sh" "$@"

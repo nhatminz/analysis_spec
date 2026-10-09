@@ -1,0 +1,44 @@
+........................................................................ [ 22%]
+........................................................................ [ 45%]
+........................................................................ [ 67%]
+........................................................................ [ 90%]
+................................                                         [100%]
+=============================== warnings summary ===============================
+tests/test_fastgrpo_rewrite.py: 15 warnings
+tests/test_motivation_cuda.py: 3 warnings
+tests/test_opd_final_optimization.py: 1 warning
+tests/test_opd_reflex.py: 14 warnings
+tests/test_opd_revision.py: 14 warnings
+tests/test_opd_sampling_finite.py: 14 warnings
+  /mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_reflex.py:180: UserWarning: No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.
+    warnings.warn('No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.')
+
+tests/test_motivation_cuda.py::test_single_target_step_resume_vs_uninterrupted_and_unscheduled_no_eval
+tests/test_motivation_state.py::test_one_actual_target_step_and_control_cannot_change_weights
+  /mnt/hdd/nhatminh/fastgrpo_env/lib/python3.10/site-packages/peft/utils/save_and_load.py:372: UserWarning: Could not find a config file in  - will assume that the vocabulary was not modified.
+    warnings.warn(
+
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-None-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-0.95-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-None-16]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-0.9-8]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-None-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-0.95-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-None-16]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-0.9-8]
+  /mnt/hdd/nhatminh/SpecDecode/analysis_spec/tests/references/opd_sampling_before_finite.py:41: UserWarning: All sequences in the batch are invalid. Returning EOS token IDs as fallback.
+    warnings.warn("All sequences in the batch are invalid. Returning EOS token IDs as fallback.")
+
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-None-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-0.95-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-None-16]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_nan-0.9-8]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-None-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-0.95-None]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-None-16]
+tests/test_opd_sampling_finite.py::test_strict_nan_inf_all_invalid_and_mixed_fallback_matches_old[all_inf-0.9-8]
+  /mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_sampling.py:89: UserWarning: All sequences in the batch are invalid. Returning EOS token IDs as fallback.
+    warnings.warn("All sequences in the batch are invalid. Returning EOS token IDs as fallback.")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+320 passed, 79 warnings in 20.81s

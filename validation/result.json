@@ -1,0 +1,39 @@
+{
+  "format": "implementation_validation_v1",
+  "cuda_tests": {
+    "passed": 320,
+    "warnings": 79,
+    "seconds": 20.81,
+    "log": "cuda_tests_final.log"
+  },
+  "cpu_tests": {
+    "passed": 88,
+    "skipped": 205,
+    "seconds": 4.16,
+    "log": "cpu_tests_final.log"
+  },
+  "port_mappings": 57,
+  "reference_unchanged": false,
+  "real_3b_smoke": {
+    "output": "qwen3b_final_smoke",
+    "passed": true,
+    "resume_passed": true,
+    "replot_passed": true,
+    "report_passed": true,
+    "policy_step": 1,
+    "eval_responses": 12,
+    "duplicate_responses": 0,
+    "hidden_max_abs": 0.0,
+    "distribution_tv_max": 0.0,
+    "zero_drift_placebo_passed": true,
+    "peak_response_cuda_allocated_bytes": 11508200960,
+    "checkpoint_bytes": 3985981466,
+    "trace_bytes": 482409248,
+    "research_result": false,
+    "production_checkpoint_available": false
+  },
+  "reference_concurrent_changes": "reference_concurrent_changes.json",
+  "agent_write_scope": "analysis_spec only",
+  "ported_runtime_reference_helpers_unchanged": true,
+  "local_port_integrity_passed": true
+}

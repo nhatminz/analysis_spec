@@ -1,0 +1,14 @@
+...                                                                      [100%]
+=============================== warnings summary ===============================
+tests/test_motivation_cuda.py::test_actual_rollout_alignment_and_exact_cap_both_methods
+tests/test_motivation_cuda.py::test_a2_order_invariance_frozen_A_and_rng_restore
+tests/test_motivation_cuda.py::test_single_target_step_resume_vs_uninterrupted_and_unscheduled_no_eval
+  /mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_reflex.py:180: UserWarning: No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.
+    warnings.warn('No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.')
+
+tests/test_motivation_cuda.py::test_single_target_step_resume_vs_uninterrupted_and_unscheduled_no_eval
+  /mnt/hdd/nhatminh/fastgrpo_env/lib/python3.10/site-packages/peft/utils/save_and_load.py:372: UserWarning: Could not find a config file in  - will assume that the vocabulary was not modified.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+3 passed, 4 warnings in 11.12s

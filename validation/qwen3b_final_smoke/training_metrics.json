@@ -1,0 +1,34 @@
+[
+  {
+    "all_reward_groups_excluded": true,
+    "main_grpo_buffer_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "policy_step": 1,
+    "prompt_ids": [
+      "train:5764"
+    ],
+    "reflex_loss": {
+      "distribution_loss": 0.9243713617324829,
+      "feature_loss": 2.7096009254455566,
+      "gradient_sha256": "16c06d93c6ae368c230f65248af236c3368325b5fd05fce17fd31f1b7b40a729"
+    },
+    "rewards": [
+      [
+        0.0,
+        0.0
+      ]
+    ],
+    "shadow_loss": {
+      "distribution_loss": 0.8446800112724304,
+      "feature_loss": 2.8279383182525635,
+      "gradient_sha256": "867b2a0bdc4833e7b88b080b78fb4baefcad5de92992b8f4df968e839e334bec"
+    },
+    "target_loss": 0.0,
+    "target_new_sha256": "6a9fa122ef20f29542a120a897d24c3f1d8f56223cbb27ed37d834e8049339dc",
+    "target_old_sha256": "6a9fa122ef20f29542a120a897d24c3f1d8f56223cbb27ed37d834e8049339dc",
+    "target_optimizer_steps": 1,
+    "target_trajectories": 0,
+    "train_response_count_per_learner": 2,
+    "zero_drift": true,
+    "zero_update_control": true
+  }
+]

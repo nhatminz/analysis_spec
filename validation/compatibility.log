@@ -1,0 +1,8 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+{
+  "model": "/mnt/hdd/nhatminh/SpecDecode/models/Qwen2.5-3B-Instruct",
+  "draft": "/mnt/hdd/nhatminh/.specnaacl-validation/qwen3b-modern/checkpoints/smoke-latest/draft.pth",
+  "train": "/mnt/hdd/nhatminh/SpecDecode/data/simplelr_abel_level3to5/train.parquet",
+  "test": "/mnt/hdd/nhatminh/SpecDecode/data/simplelr_abel_level3to5/test.parquet",
+  "valid": true
+}
