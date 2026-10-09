@@ -6,6 +6,7 @@ import gc
 import time
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 from motivation.state import cpu_copy,digest,gradients,restore_gradients,isolated_rng,generation_seed
 from motivation.data import tokenize
 from teacher_relabel import base_model,distribution
@@ -276,8 +277,9 @@ def evaluate(model,rows,tokenizer,config,step,condition,target_old_id,target_new
     before=digest(model.draft_model.state_dict());head_id=digest(model.lm_head.state_dict())
     projector_id=digest(model.opd_projector) if method=='opd_reflex' else None
     records=[]
-    with evaluation_state([model]):
-        for row in rows:
+    with evaluation_state([model]), tqdm(rows,desc=f"Step {step}: {condition}",unit="prompt",
+                                        position=1,leave=False,dynamic_ncols=True) as progress:
+        for row in progress:
             batch=tokenize([row],tokenizer);prompt_length=int(batch['attention_mask'].sum())
             seed=generation_seed(config.seed,step,row['id'])
             torch.cuda.reset_peak_memory_stats();started=time.perf_counter()
