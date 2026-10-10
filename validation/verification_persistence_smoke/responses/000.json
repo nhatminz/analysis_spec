@@ -1,0 +1,197 @@
+{
+  "accepted_length_sum": 31,
+  "generated_tokens": 32,
+  "generation_seed": 7582305368894756017,
+  "measurements": [],
+  "question_sha256": "4d3f648ff73c6df2ffb6de4f4833fe1175ec3ba8d0f836eec15c7469b9d183db",
+  "response_id": "test:306",
+  "role": "donor",
+  "round_observations": [
+    {
+      "cache_length": 267,
+      "root_position": 267,
+      "root_token": 27,
+      "round": 0,
+      "token_ids": null
+    },
+    {
+      "cache_length": 268,
+      "root_position": 268,
+      "root_token": 26865,
+      "round": 1,
+      "token_ids": null
+    },
+    {
+      "cache_length": 269,
+      "root_position": 269,
+      "root_token": 397,
+      "round": 2,
+      "token_ids": null
+    },
+    {
+      "cache_length": 270,
+      "root_position": 270,
+      "root_token": 22043,
+      "round": 3,
+      "token_ids": null
+    },
+    {
+      "cache_length": 271,
+      "root_position": 271,
+      "root_token": 429,
+      "round": 4,
+      "token_ids": null
+    },
+    {
+      "cache_length": 273,
+      "root_position": 273,
+      "root_token": 1975,
+      "round": 5,
+      "token_ids": null
+    },
+    {
+      "cache_length": 274,
+      "root_position": 274,
+      "root_token": 1056,
+      "round": 6,
+      "token_ids": null
+    },
+    {
+      "cache_length": 275,
+      "root_position": 275,
+      "root_token": 90,
+      "round": 7,
+      "token_ids": null
+    },
+    {
+      "cache_length": 276,
+      "root_position": 276,
+      "root_token": 4897,
+      "round": 8,
+      "token_ids": null
+    },
+    {
+      "cache_length": 277,
+      "root_position": 277,
+      "root_token": 31716,
+      "round": 9,
+      "token_ids": null
+    },
+    {
+      "cache_length": 278,
+      "root_position": 278,
+      "root_token": 374,
+      "round": 10,
+      "token_ids": null
+    },
+    {
+      "cache_length": 280,
+      "root_position": 280,
+      "root_token": 311,
+      "round": 11,
+      "token_ids": null
+    },
+    {
+      "cache_length": 282,
+      "root_position": 282,
+      "root_token": 10238,
+      "round": 12,
+      "token_ids": null
+    },
+    {
+      "cache_length": 283,
+      "root_position": 283,
+      "root_token": 1526,
+      "round": 13,
+      "token_ids": null
+    },
+    {
+      "cache_length": 285,
+      "root_position": 285,
+      "root_token": 32,
+      "round": 14,
+      "token_ids": null
+    },
+    {
+      "cache_length": 286,
+      "root_position": 286,
+      "root_token": 3,
+      "round": 15,
+      "token_ids": null
+    },
+    {
+      "cache_length": 287,
+      "root_position": 287,
+      "root_token": 323,
+      "round": 16,
+      "token_ids": null
+    },
+    {
+      "cache_length": 288,
+      "root_position": 288,
+      "root_token": 400,
+      "round": 17,
+      "token_ids": null
+    },
+    {
+      "cache_length": 289,
+      "root_position": 289,
+      "root_token": 1867,
+      "round": 18,
+      "token_ids": null
+    },
+    {
+      "cache_length": 290,
+      "root_position": 290,
+      "root_token": 284,
+      "round": 19,
+      "token_ids": null
+    },
+    {
+      "cache_length": 291,
+      "root_position": 291,
+      "root_token": 18040,
+      "round": 20,
+      "token_ids": null
+    },
+    {
+      "cache_length": 292,
+      "root_position": 292,
+      "root_token": 54876,
+      "round": 21,
+      "token_ids": null
+    },
+    {
+      "cache_length": 293,
+      "root_position": 293,
+      "root_token": 582,
+      "round": 22,
+      "token_ids": null
+    },
+    {
+      "cache_length": 294,
+      "root_position": 294,
+      "root_token": 646,
+      "round": 23,
+      "token_ids": null
+    },
+    {
+      "cache_length": 296,
+      "root_position": 296,
+      "root_token": 429,
+      "round": 24,
+      "token_ids": null
+    },
+    {
+      "cache_length": 297,
+      "root_position": 297,
+      "root_token": 57960,
+      "round": 25,
+      "token_ids": null
+    }
+  ],
+  "rounds": 26,
+  "runtime_s": 2.895034828223288,
+  "termination": "token_cap",
+  "zero_round": false
+}

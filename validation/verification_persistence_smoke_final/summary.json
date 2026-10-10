@@ -1,0 +1,263 @@
+{
+  "bootstrap": "percentile 95% CI, evaluation-response clusters; donors conditioned on their observed sets",
+  "bootstrap_resamples": 2000,
+  "bootstrap_seed": 2026,
+  "distances": [
+    {
+      "control": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -4.17984883824829e-05,
+          -4.17984883824829e-05
+        ],
+        "mean": -4.17984883824829e-05,
+        "responses": 1,
+        "samples": 1
+      },
+      "control_coverage": 0.2,
+      "distance": 1,
+      "future_contexts": 41,
+      "missing_donor_positive_eight": 4,
+      "missing_donor_rounds": 0,
+      "missing_positive_eight": 36,
+      "paired_difference": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.04303003548193374,
+          0.04303003548193374
+        ],
+        "mean": 0.04303003548193374,
+        "responses": 1,
+        "samples": 1
+      },
+      "same": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.042988236993551254,
+          0.042988236993551254
+        ],
+        "mean": 0.042988236993551254,
+        "responses": 1,
+        "samples": 1
+      },
+      "same_all": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.013195235602324829,
+          0.013195235602324829
+        ],
+        "mean": 0.013195235602324829,
+        "responses": 1,
+        "samples": 5
+      },
+      "unfinished_horizons": 2,
+      "valid_pairs": 1
+    },
+    {
+      "control": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -2.045103974523954e-05,
+          -2.045103974523954e-05
+        ],
+        "mean": -2.045103974523954e-05,
+        "responses": 1,
+        "samples": 1
+      },
+      "control_coverage": 0.2,
+      "distance": 2,
+      "future_contexts": 39,
+      "missing_donor_positive_eight": 4,
+      "missing_donor_rounds": 0,
+      "missing_positive_eight": 34,
+      "paired_difference": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.10958429345555487,
+          0.10958429345555487
+        ],
+        "mean": 0.10958429345555487,
+        "responses": 1,
+        "samples": 1
+      },
+      "same": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.10956384241580963,
+          0.10956384241580963
+        ],
+        "mean": 0.10956384241580963,
+        "responses": 1,
+        "samples": 1
+      },
+      "same_all": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.04299360677177901,
+          0.04299360677177901
+        ],
+        "mean": 0.04299360677177901,
+        "responses": 1,
+        "samples": 5
+      },
+      "unfinished_horizons": 4,
+      "valid_pairs": 1
+    },
+    {
+      "control": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -3.241003923903918e-06,
+          -3.241003923903918e-06
+        ],
+        "mean": -3.241003923903918e-06,
+        "responses": 1,
+        "samples": 1
+      },
+      "control_coverage": 0.2,
+      "distance": 3,
+      "future_contexts": 37,
+      "missing_donor_positive_eight": 4,
+      "missing_donor_rounds": 0,
+      "missing_positive_eight": 32,
+      "paired_difference": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -4.7791282213438535e-05,
+          -4.7791282213438535e-05
+        ],
+        "mean": -4.7791282213438535e-05,
+        "responses": 1,
+        "samples": 1
+      },
+      "same": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -5.103228613734245e-05,
+          -5.103228613734245e-05
+        ],
+        "mean": -5.103228613734245e-05,
+        "responses": 1,
+        "samples": 1
+      },
+      "same_all": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.03777528106584214,
+          0.03777528106584214
+        ],
+        "mean": 0.03777528106584214,
+        "responses": 1,
+        "samples": 5
+      },
+      "unfinished_horizons": 6,
+      "valid_pairs": 1
+    },
+    {
+      "control": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -3.0733544917893596e-06,
+          -3.0733544917893596e-06
+        ],
+        "mean": -3.0733544917893596e-06,
+        "responses": 1,
+        "samples": 1
+      },
+      "control_coverage": 0.25,
+      "distance": 4,
+      "future_contexts": 35,
+      "missing_donor_positive_eight": 3,
+      "missing_donor_rounds": 0,
+      "missing_positive_eight": 31,
+      "paired_difference": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -0.000323592898894276,
+          -0.000323592898894276
+        ],
+        "mean": -0.000323592898894276,
+        "responses": 1,
+        "samples": 1
+      },
+      "same": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -0.00032666625338606536,
+          -0.00032666625338606536
+        ],
+        "mean": -0.00032666625338606536,
+        "responses": 1,
+        "samples": 1
+      },
+      "same_all": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          0.025609089963836595,
+          0.025609089963836595
+        ],
+        "mean": 0.025609089963836595,
+        "responses": 1,
+        "samples": 4
+      },
+      "unfinished_horizons": 8,
+      "valid_pairs": 1
+    },
+    {
+      "control": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -1.0892682439589407e-05,
+          -1.0892682439589407e-05
+        ],
+        "mean": -1.0892682439589407e-05,
+        "responses": 1,
+        "samples": 1
+      },
+      "control_coverage": 0.3333333333333333,
+      "distance": 5,
+      "future_contexts": 33,
+      "missing_donor_positive_eight": 2,
+      "missing_donor_rounds": 0,
+      "missing_positive_eight": 30,
+      "paired_difference": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -0.00044621033248404274,
+          -0.00044621033248404274
+        ],
+        "mean": -0.00044621033248404274,
+        "responses": 1,
+        "samples": 1
+      },
+      "same": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -0.00045710301492363214,
+          -0.00045710301492363214
+        ],
+        "mean": -0.00045710301492363214,
+        "responses": 1,
+        "samples": 1
+      },
+      "same_all": {
+        "bootstrap_valid_resamples": 1497,
+        "ci95": [
+          -0.00024570691069432843,
+          -0.00024570691069432843
+        ],
+        "mean": -0.00024570691069432843,
+        "responses": 1,
+        "samples": 3
+      },
+      "unfinished_horizons": 10,
+      "valid_pairs": 1
+    }
+  ],
+  "estimator": "round-weighted mean; plotted curves use identical paired support; same_all includes unmatched origins",
+  "evaluation_responses": 2,
+  "interpretation": "Descriptive evidence only; inspect paired differences and intervals before assessing persistence.",
+  "runtime_s": 61.206003876402974,
+  "status": "complete",
+  "zero_round_evaluation_responses": 0
+}

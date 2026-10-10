@@ -1,0 +1,136 @@
+{
+  "alignment": "equal root input token, logical target position, prefix cache length; draft shifted-input convention",
+  "checkpoint": {
+    "path": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/correctness_fixes/qwen3b_8x8_cache_release/checkpoints/latest.pt",
+    "policy_step": 1,
+    "sha256": "6678319a094ea184f11d309f9445e58eded5b8cad2a933c6b80f5359aed938b3",
+    "shadow_weights_sha256": "08d0e61bfeb7b352f1c1de60d50a60cc3acebc7ad54407a8b84eaaca42a73112",
+    "source_manifest_path": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/correctness_fixes/qwen3b_8x8_cache_release/analysis/manifest.json",
+    "source_manifest_sha256": "4f5bb9174d5ff07947cce2fe691b183c0ff5542ef93476e82a04e6ac4d85f629",
+    "source_research_result": false,
+    "target_lora_sha256": "8d93a9b8e014fb20357ed1956510ff4264d53627ec46f51424670f356e8ac062"
+  },
+  "config": {
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 2026,
+    "checkpoint": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/correctness_fixes/qwen3b_8x8_cache_release/checkpoints/latest.pt",
+    "donor_prompts": 2,
+    "max_new_tokens": 32,
+    "model": "/mnt/hdd/nhatminh/SpecDecode/models/Qwen2.5-3B-Instruct",
+    "num_prompts": 4,
+    "output_dir": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/verification_persistence_smoke_final",
+    "seed": 2026,
+    "smoke": true,
+    "source_manifest": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/correctness_fixes/qwen3b_8x8_cache_release/analysis/manifest.json",
+    "test_path": "/mnt/hdd/nhatminh/SpecDecode/data/simplelr_abel_level3to5/test.parquet",
+    "train_path": "/mnt/hdd/nhatminh/SpecDecode/data/simplelr_abel_level3to5/train.parquet",
+    "wall_clock_minutes": 10.0
+  },
+  "control": "one independent donor at identical origin-round index; sparse gather on recipient future context",
+  "data_manifest_sha256": "2fd310867c2a0de6f055906aea706219ad9398ccbe9e4a45d71428d45dfad611",
+  "format": "verification_persistence_v1",
+  "frozen_weights_verified": true,
+  "generation_kwargs": {
+    "do_sample": true,
+    "draft_token_length_c": 0.75,
+    "max_draft_k": 8,
+    "max_draft_token_length": 5,
+    "max_verification_num": 160,
+    "min_draft_token_length": 3,
+    "repeated_generate_nums": 1,
+    "return_all_draft_input": false,
+    "statistical_time": false,
+    "temperature": 1.0,
+    "top_k": null,
+    "top_p": 0.95,
+    "verification_capacity": 512
+  },
+  "implementation_sha256": {
+    "helper/fastgrpo_generate.py": "d6d87900b0f4cdb6ca2e4ff866c152c06213e49284a7bd9dc3bd25fae8055a59",
+    "motivation/verification_persistence.py": "1daceb7df16b082e623a46e0eb4c576978183425745feaa44a26246970744f32",
+    "run_verification_persistence.py": "7b2c3f7c1aec517d7e597ec93ae782df05b987322591fa5252c46eecd01256c0"
+  },
+  "model": {
+    "config": {
+      "architectures": [
+        "Qwen2ForCausalLM"
+      ],
+      "attention_dropout": 0.0,
+      "bos_token_id": 151643,
+      "eos_token_id": 151645,
+      "hidden_act": "silu",
+      "hidden_size": 2048,
+      "initializer_range": 0.02,
+      "intermediate_size": 11008,
+      "max_position_embeddings": 32768,
+      "max_window_layers": 70,
+      "model_type": "qwen2",
+      "num_attention_heads": 16,
+      "num_hidden_layers": 36,
+      "num_key_value_heads": 2,
+      "rms_norm_eps": 1e-06,
+      "rope_theta": 1000000.0,
+      "sliding_window": 32768,
+      "tie_word_embeddings": true,
+      "torch_dtype": "bfloat16",
+      "transformers_version": "4.43.1",
+      "use_cache": true,
+      "use_sliding_window": false,
+      "vocab_size": 151936
+    },
+    "config_sha256": "eed00b17e22553979d090fa492e587e92885e328914c8e0b0b78f0a0d3576b3b",
+    "path": "/mnt/hdd/nhatminh/SpecDecode/models/Qwen2.5-3B-Instruct",
+    "variant": "Qwen2.5-3B-Instruct",
+    "weight_sha256": {
+      "model-00001-of-00002.safetensors": "67347b23fb4165b652eb6611f5e1f2a06dfcddba8e909df1b2b0b1857bee06c2",
+      "model-00002-of-00002.safetensors": "a40d941d0e7e0b966ad8b62bb6d6b7c88cce1299197b599d9d0a4ce59aabfc1d"
+    }
+  },
+  "observations": "8 strictly positive-error token IDs or missing; sparse future means only; no vocabulary CPU transfers",
+  "p_distribution": "exact target multinomial probabilities after temperature, top-p then top-k; no recomputation",
+  "q_distribution": "untempered original FastGRPO root proposal softmax",
+  "research_result": false,
+  "runtime": {
+    "cuda": "12.4",
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "peft": "0.19.1",
+    "python": "3.10.20 (main, Jun 11 2026, 15:17:37) [GCC 14.3.0]",
+    "torch": "2.6.0+cu124",
+    "transformers": "5.12.1"
+  },
+  "runtime_s": 61.206003876402974,
+  "sample_counts": {
+    "donor_responses": 2,
+    "evaluation_responses": 2,
+    "total_rounds": 92,
+    "valid_pairs": {
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 1,
+      "5": 1
+    },
+    "zero_round_responses": 0
+  },
+  "seeds": {
+    "bootstrap": 2026,
+    "controls": 2026,
+    "generation": 2026,
+    "subset": 2026
+  },
+  "started_at_utc": "2026-10-10T11:38:24.392863+00:00",
+  "status": "complete",
+  "stopping": "original FastGRPO EOS and exact max_new_tokens cap, no acceptance-counter changes",
+  "subset": [
+    "test:306",
+    "test:474",
+    "test:190",
+    "test:438"
+  ],
+  "tokenizer": {
+    "merges.txt": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+    "tokenizer.json": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+    "tokenizer_config.json": "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583",
+    "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+  }
+}

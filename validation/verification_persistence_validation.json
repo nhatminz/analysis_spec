@@ -1,0 +1,68 @@
+{
+  "artifacts": [
+    "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/verification_persistence_smoke_final/results.csv",
+    "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/verification_persistence_smoke_final/summary.json",
+    "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/verification_persistence_smoke_final/verification_persistence.pdf",
+    "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/verification_persistence_smoke_final/manifest.json"
+  ],
+  "cpu_unit_tests": {
+    "passed": 10,
+    "runtime_s": 3.66,
+    "skipped_cuda_tests": 3
+  },
+  "cuda_observation_invariance": {
+    "cases": [
+      "ordinary",
+      "prefill_eos",
+      "verified_eos"
+    ],
+    "checks": [
+      "generated tokens",
+      "acceptance counters",
+      "RNG states",
+      "target/draft forward counts"
+    ],
+    "passed": true
+  },
+  "cuda_suite": {
+    "passed": 353,
+    "runtime_s": 27.4,
+    "warnings": 85
+  },
+  "full_64_prompt_run_launched": false,
+  "hypothesis_confirmed": false,
+  "interpretation": "Smoke verifies execution only; one valid pair per distance, insufficient coverage for a hypothesis claim",
+  "long_grpo_training_launched": false,
+  "production_protocol": {
+    "bootstrap_resamples": 2000,
+    "donors": 16,
+    "evaluation_responses": 48,
+    "max_new_tokens": 256,
+    "prompts": 64,
+    "wall_clock_minutes": 150
+  },
+  "qwen3b_smoke": {
+    "checkpoint_policy_step": 1,
+    "frozen_weights_verified": true,
+    "output_dir": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/validation/verification_persistence_smoke_final",
+    "research_result": false,
+    "runtime_s": 61.206003876402974,
+    "sample_counts": {
+      "donor_responses": 2,
+      "evaluation_responses": 2,
+      "total_rounds": 92,
+      "valid_pairs": {
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1
+      },
+      "zero_round_responses": 0
+    },
+    "source_research_result": false,
+    "status": "complete"
+  },
+  "scope": "analysis_spec only; standalone frozen FastGRPO inference; no GRPO algorithm changes",
+  "status": "PASS"
+}

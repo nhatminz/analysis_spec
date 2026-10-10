@@ -39,7 +39,8 @@ def sampling(
     top_k=None, 
     top_p=None, 
     temperature=0.6, 
-    eos_token_id=2
+    eos_token_id=2,
+    probability_observer=None,
 ):
     """
     Perform combined top-k and top-p (nucleus) sampling on logits.
@@ -69,6 +70,10 @@ def sampling(
     valid_mask = ~torch.isinf(logits_flat).all(dim=-1)  
     if not valid_mask.any():
         warnings.warn("All sequences in the batch are invalid. Returning EOS token IDs as fallback.")
+        if probability_observer is not None:
+            fallback = torch.zeros_like(logits_flat)
+            fallback[:, eos_token_id] = 1
+            probability_observer(fallback, torch.arange(len(logits_flat), device=logits.device))
         return torch.full(
             (bsz, seq_len), 
             fill_value=eos_token_id, 
@@ -109,6 +114,9 @@ def sampling(
 
         sampled_indices = torch.multinomial(probs, num_samples=1).squeeze(-1)
         sampled_tokens_flat[valid_indices] = sampled_indices
+        if probability_observer is not None:
+            # Observe the EXACT distribution consumed above, without resampling.
+            probability_observer(probs, valid_indices)
 
     sampled_tokens = sampled_tokens_flat.view(bsz, seq_len)
     return sampled_tokens
@@ -139,10 +147,13 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                         max_draft_token_length=5, max_draft_k=8, max_verification_num=160,
                         min_draft_token_length=3, draft_token_length_c=0.75,
                         statistical_time=True,return_all_draft_input=False,
-                        max_length=2048, max_new_tokens=None, teacher_trace=None
+                        max_length=2048, max_new_tokens=None, teacher_trace=None,
+                        observation_hook=None,
                         ):
 
 
+    if observation_hook is not None and (not do_sample or input_ids.shape[0] != 1 or (repeated_generate_nums or 1) != 1):
+        raise ValueError('Root observation requires sampled single-response generation')
     if max_new_tokens is not None:
         if input_ids.shape[0] != 1 or (repeated_generate_nums or 1) != 1 or max_new_tokens < 2:
             raise ValueError('Exact response cap is supported only for single-response evaluation, cap >= 2')
@@ -159,7 +170,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
 
     def draft_generate(model,next_feature_states,draft_hidden_states,draft_past_key_values_tree,
                         draft_token_length,past_position_ids_tensor,padding_positions,
-                        draft_k=4,draft_total_token=32):
+                        draft_k=4,draft_total_token=32,root_input_ids=None):
         
         global total_check_time
         
@@ -180,6 +191,12 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         
         draft_logits=model.lm_head(draft_hidden_states.to(model.target_model.dtype))
         draft_logits=draft_logits.softmax(dim=-1)
+        root_observation = None
+        if observation_hook is not None:
+            root_observation = dict(q=draft_logits[0, 0].detach(),
+                                    root_token=root_input_ids[0, 0].detach().clone(),
+                                    root_position=(past_position_ids_tensor[0]+1).detach().clone(),
+                                    cache_length=draft_past_key_values_tree[0][0].shape[-2])
         
         next_token_values, draft_next_token=torch.topk(draft_logits, k=draft_k, dim=-1) # draft_next_token.shape (bsz, 1, draft_k)
         draft_confidences=next_token_values.view(bsz, -1) # (bsz, draft_k)
@@ -334,6 +351,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         target_position_ids=total_position_ids.gather(index=chosen_index, dim=-1)
                 
         return {
+            'root_observation':root_observation,
             'trees':trees,
             'trees_chosen_index':chosen_index_list,
             'next_token_trees':next_token_trees,
@@ -613,7 +631,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         
         outputs=draft_generate(model,next_feature_states,draft_hidden_states,draft_past_key_values,
                             draft_token_length,past_position_ids_tensor,padding_positions_tensor,
-                            draft_k=draft_k, draft_total_token=draft_total_token)
+                            draft_k=draft_k, draft_total_token=draft_total_token,
+                            root_input_ids=draft_input_ids[:, -1:])
         
         draft_trees=outputs['trees']
         trees_chosen_index=outputs['trees_chosen_index']
@@ -649,6 +668,20 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         next_token_trees=torch.concat([target_next_token, next_token_trees], dim=-1) # (bsz, q_length)
         target_position_ids = target_position_ids+2
         target_position_ids = torch.concat([(past_position_ids_tensor+1).unsqueeze(-1), target_position_ids], dim=-1) # (bsz, q_length)
+        if observation_hook is not None:
+            root_observation = outputs['root_observation']
+            from motivation.verification_persistence import validate_root_alignment
+            validate_root_alignment(root_observation, next_token_trees[0, 0], target_position_ids[0, 0], past_kv_len)
+            def observe_probabilities(probs, valid_indices):
+                root_indices = torch.nonzero(valid_indices == 0, as_tuple=False).flatten()
+                if root_indices.numel():
+                    p = probs[root_indices[0]]
+                else:
+                    # Invalid root logits use the sampler's deterministic EOS fallback.
+                    p = torch.zeros_like(root_observation['q']);p[eos_token_id] = 1
+                observation_hook.observe_round(root_observation['q'], p,
+                    root_token=int(next_token_trees[0, 0]),root_position=int(target_position_ids[0, 0]),
+                    cache_length=past_kv_len)
                         
         min_dtype=torch.finfo(model.target_model.dtype).min
         
@@ -711,7 +744,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             if do_sample==False:
                 target_next_token_tree=target_outputs_logits.softmax(-1).argmax(-1)
             elif do_sample==True:
-                target_next_token_tree=sampling(target_outputs_logits,top_k,top_p,temperature,eos_token_id)
+                target_next_token_tree=sampling(target_outputs_logits,top_k,top_p,temperature,eos_token_id,
+                    **({'probability_observer':observe_probabilities} if observation_hook is not None else {}))
             else:
                 raise ValueError('"do_sample" must be True or False')
         
@@ -1052,13 +1086,15 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             draft_past_key_values=draft_outputs['past_key_values']
             
             B, S, D =draft_outputs['hidden_states'].shape
+            draft_root_input_ids = next_token.gather(index=last_valid_index, dim=-1) if observation_hook is not None else None
             last_valid_index=last_valid_index.unsqueeze(-1).expand(-1,-1,D) # [bsz, 1] -> [bsz, 1, D]
             draft_hidden_states=draft_outputs['hidden_states'].gather(index=last_valid_index, dim=1)
             next_feature_states=draft_outputs['next_feature_states'].gather(index=last_valid_index, dim=1)
 
             outputs=draft_generate(model, next_feature_states, draft_hidden_states, draft_past_key_values,
                                 draft_token_length, past_position_ids_tensor, padding_positions_tensor,
-                                draft_k=draft_k, draft_total_token=draft_total_token)
+                                draft_k=draft_k, draft_total_token=draft_total_token,
+                                root_input_ids=draft_root_input_ids)
             
             draft_trees=outputs['trees']
             trees_chosen_index=outputs['trees_chosen_index']
