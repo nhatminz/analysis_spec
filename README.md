@@ -1,5 +1,11 @@
 # SimpleLR + Qwen2.5-3B-Instruct: A1/A2 in one run
 
+For the independent **pure FastGRPO E2–E6 pipeline**, use `run_e2_e6.sh` and
+[README_E2_E6.md](README_E2_E6.md). It trains its own target/draft, saves permanent
+30/100/200/500 milestones and derives all five analyses from one shared event log,
+with SPARK/Reflex disabled. B200 setup, resume, collection and offline plotting
+commands are in that guide.
+
 `run_policy_lag_motivation.py` is the standalone entrypoint. Production FastGRPO and latest Reflex OPD are ported locally; `SpecNaacl` is a read-only source reference, never a runtime Python dependency. There is one OPD-driven target GRPO trajectory, persistent Reflex R/A, persistent pure FastGRPO shadow S, and a disposable matched-sequence Fresh fork only at measurement boundaries.
 
 Read [DESIGN_A1_A2.md](DESIGN_A1_A2.md) for the exact timeline, replay gates, counter semantics and statistical limits, and [PORT_MANIFEST.md](PORT_MANIFEST.md) for sources, hashes and retired code. Old policy-lag launcher names forward to the new entrypoint; obsolete experiment arguments/settings fail. Historical EAGLE3 pretraining tools are segregated in `legacy_pretraining/` and cannot initialize this experiment.

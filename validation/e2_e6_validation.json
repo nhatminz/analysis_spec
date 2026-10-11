@@ -1,0 +1,201 @@
+{
+  "timestamp_utc": "2026-10-10T21:29:48.030762+00:00",
+  "scope": "All implementation, validation outputs, logs and test scratch files reside inside analysis_spec. SpecNaacl was read only.",
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "torch": "2.6.0+cu124",
+    "cuda": "12.4",
+    "python": "Python 3.10.20",
+    "transformers": "5.12.1",
+    "peft": "0.19.1"
+  },
+  "tests": {
+    "full_cuda_environment_suite": {
+      "passed": 375,
+      "skipped": 0,
+      "warnings": 87,
+      "runtime_s": 59.67,
+      "log": "validation/e2_e6_pytest_gpu.log"
+    },
+    "cpu_only_environment_e2_e6": {
+      "passed": 15,
+      "skipped": 7,
+      "warnings": 0,
+      "runtime_s": 5.68,
+      "log": "validation/e2_e6_pytest_cpu.log"
+    },
+    "new_cpu_tests": 15,
+    "new_cuda_tests": 7,
+    "assertions": [
+      "Instrumented/uninstrumented token, acceptance-counter and RNG equality",
+      "EOS at prefill and verification, swap-removal mapping, visited-path reconstruction",
+      "Coverage vs pruning vs missing beam/depth/length observations",
+      "Strictly earlier whole-batch round boundary, exclusive E3 categories, exposure counts",
+      "Rollout cluster bootstrap, common support, no CI from a single independent rollout",
+      "Immutable milestones, corruption detection, recovery after latest commit before milestone publication",
+      "Actual two-step tiny training equals interrupted/resumed training in weights, optimizers, RNG and sampler",
+      "Zero-variance fixture rewards skip target update and policy-step increment",
+      "One tiny rollout per fixture checkpoint, Parquet/JSON/PDF outputs, token-equivalent timing replay",
+      "Adding fixture 500 skips earlier valid rollouts and earlier valid analysis caches"
+    ],
+    "final_e2_e6_focus": {
+      "passed": 22,
+      "warnings": 2,
+      "runtime_s": 26.92,
+      "log": "validation/e2_e6_pytest_final_focus.log"
+    },
+    "bash_syntax_and_python_compile": "passed",
+    "entrypoint_checkpoint_integrity": {
+      "log": "validation/e2_e6_fixture_integrity.json",
+      "fixture_rollouts_verified": 4
+    },
+    "entrypoint_offline_cpu_analysis": {
+      "log": "validation/e2_e6_offline_cpu_cli.json",
+      "checkpoints": [
+        "30",
+        "100",
+        "200",
+        "500"
+      ],
+      "production_checkpoints": false
+    }
+  },
+  "short_cuda_smoke": {
+    "model": "Tiny random Qwen/FastGRPO test fixture; NOT production Qwen2.5-3B or pretrained draft",
+    "batch_size": 2,
+    "responses_per_prompt": 2,
+    "max_length": 17,
+    "rollouts": [
+      {
+        "fixture_step_id": 30,
+        "real_training_milestone": false,
+        "rollout_id": 0,
+        "responses": 4,
+        "generated_tokens": 53,
+        "events": 53,
+        "event_logging_wall_s": 0.12911718897521496,
+        "event_disabled_replay_wall_s": 0.12460950296372175,
+        "token_equivalence": true,
+        "reconstruction": true
+      },
+      {
+        "fixture_step_id": 100,
+        "real_training_milestone": false,
+        "rollout_id": 0,
+        "responses": 4,
+        "generated_tokens": 56,
+        "events": 56,
+        "event_logging_wall_s": 0.13956208247691393,
+        "event_disabled_replay_wall_s": 0.13837735541164875,
+        "token_equivalence": true,
+        "reconstruction": true
+      },
+      {
+        "fixture_step_id": 200,
+        "real_training_milestone": false,
+        "rollout_id": 0,
+        "responses": 4,
+        "generated_tokens": 47,
+        "events": 47,
+        "event_logging_wall_s": 0.10868590883910656,
+        "event_disabled_replay_wall_s": 0.10794919822365046,
+        "token_equivalence": true,
+        "reconstruction": true
+      },
+      {
+        "fixture_step_id": 500,
+        "real_training_milestone": false,
+        "rollout_id": 0,
+        "responses": 4,
+        "generated_tokens": 54,
+        "events": 54,
+        "event_logging_wall_s": 0.1319696856662631,
+        "event_disabled_replay_wall_s": 0.1295723831281066,
+        "token_equivalence": true,
+        "reconstruction": true
+      }
+    ],
+    "total_event_logging_wall_s": 0.5093348659574986,
+    "total_event_disabled_replay_wall_s": 0.5005084397271276,
+    "bootstrap_samples_for_fixture": 100,
+    "production_default_bootstrap_samples": 2000,
+    "artifact_directory": ".cache/e2e6_final_gpu/test_collect_three_fixture_che0"
+  },
+  "specnaacl_reference_hashes_unchanged": true,
+  "reference_audit": {
+    "../SpecNaacl/grpo_speculative.py": {
+      "before": "4ecf3eb45bb8124a89c23db76b275b5b2784cefdf249dc975822ee9892c49923",
+      "after": "4ecf3eb45bb8124a89c23db76b275b5b2784cefdf249dc975822ee9892c49923"
+    },
+    "../SpecNaacl/helper/get_QAs.py": {
+      "before": "72974e50046cd70fe956a00a787fdaa070bce36110ee239a7d4ecd94dcfd58d2",
+      "after": "72974e50046cd70fe956a00a787fdaa070bce36110ee239a7d4ecd94dcfd58d2"
+    },
+    "../SpecNaacl/helper/rewards.py": {
+      "before": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30",
+      "after": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30"
+    },
+    "../SpecNaacl/helper/fastgrpo_generate.py": {
+      "before": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93",
+      "after": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93"
+    },
+    "../SpecNaacl/helper/fastgrpo_training.py": {
+      "before": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359",
+      "after": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359"
+    },
+    "../SpecNaacl/helper/modeling_draft.py": {
+      "before": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4",
+      "after": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4"
+    },
+    "../SpecNaacl/configs/_shared/b200_common.env": {
+      "before": "36e72c90151608db667dd83d89fc4af60ff49dbcc04ec4f06daaabf58171ecfd",
+      "after": "36e72c90151608db667dd83d89fc4af60ff49dbcc04ec4f06daaabf58171ecfd"
+    },
+    "../SpecNaacl/configs/qwen25_3b/b200.env": {
+      "before": "dba1e1103b417e3ce09775f04c7ab9078dfa36e4285ba0cc21e70f5bb685502c",
+      "after": "dba1e1103b417e3ce09775f04c7ab9078dfa36e4285ba0cc21e70f5bb685502c"
+    }
+  },
+  "b200_production_paths": {
+    "model": {
+      "path": "/workspace/storage-shared/models/Qwen2.5-3B-Instruct",
+      "available_on_development_host": false
+    },
+    "train": {
+      "path": "/workspace/storage-shared/nlp/minhpn19/data/simplelr_abel_level3to5/train.parquet",
+      "available_on_development_host": false
+    },
+    "test": {
+      "path": "/workspace/storage-shared/nlp/minhpn19/data/simplelr_abel_level3to5/test.parquet",
+      "available_on_development_host": false
+    },
+    "pretrained_draft": {
+      "path": "/workspace/storage-shared/nlp/minhpn19/SpecNaacl/outputs/pretrain/qwen25_3b/latest_checkpoint",
+      "available_on_development_host": false
+    }
+  },
+  "production_training_launched": false,
+  "production_checkpoints_created": false,
+  "production_e2_e6_measured": false,
+  "hypothesis_confirmed": false,
+  "unverified": [
+    "B200 hardware and production 3B pretrained-draft integration are unavailable on this host",
+    "No real 30/100/200/500-step training or 20x8x8 production evaluation has run",
+    "Full-size peak GPU memory, runtime and B200 throughput remain unmeasured",
+    "Host phase-wall time may include asynchronous GPU carry-over; CUDA stream elapsed is separate, not kernel-only time",
+    "Bootstrap statistical results from fixture outputs are not research findings"
+  ],
+  "implementation_sha256": {
+    "e2e6/analysis.py": "7d32afb710735274cff3a19209f8170b6edc532515e12f679889ac7f9a40fd24",
+    "e2e6/train.py": "cac3d9cf20f2a33935a7f5125a2f088eae2a78aa85586127903406fd3397de43",
+    "e2e6/events.py": "623aaa9c22fec946432d65b10af2116c954ccea28a16c7bfcd7d4dce950cceca",
+    "e2e6/checkpoints.py": "be57a0004b13bea4fb3382eca04dddf8f6e65a6fbde5f9cfe94846aa60f4f16d",
+    "e2e6/config.py": "8df13480ca5e847408b87584727486b625f0a5417f95d0379463f5bd63a7c5d7",
+    "e2e6/__init__.py": "da77b0214e44818e5c5f73378b6a74d6fc87d60dfcb94ce3f3e6a2b41aa74fe5",
+    "e2e6/runtime.py": "ed96bd420be6c707109d3f48808cef6c89a281eea0e0d8008ad7d815ec3db19d",
+    "e2e6/collect.py": "e2870f8c5b6e102e7abb527f6450116269634d740599918019423e0a4bfd0e5e",
+    "run_e2_e6.py": "e8e942e6b5647d49f419e1e3b3f4c74b285e78a94cbfbdb1c3c461040aae4f20",
+    "run_e2_e6.sh": "4683f076e7f438c2272a4b990b817ed9f602cd7a8b124af35fd4cf8777c07443",
+    "helper/fastgrpo_generate.py": "1b2dabbc52c63a39399e3e130513c1bcc557ab8f3001c7f1654927f9578bcb1d"
+  }
+}

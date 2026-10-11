@@ -1,0 +1,10 @@
+{
+  "../SpecNaacl/grpo_speculative.py": "4ecf3eb45bb8124a89c23db76b275b5b2784cefdf249dc975822ee9892c49923",
+  "../SpecNaacl/helper/get_QAs.py": "72974e50046cd70fe956a00a787fdaa070bce36110ee239a7d4ecd94dcfd58d2",
+  "../SpecNaacl/helper/rewards.py": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30",
+  "../SpecNaacl/helper/fastgrpo_generate.py": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93",
+  "../SpecNaacl/helper/fastgrpo_training.py": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359",
+  "../SpecNaacl/helper/modeling_draft.py": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4",
+  "../SpecNaacl/configs/_shared/b200_common.env": "36e72c90151608db667dd83d89fc4af60ff49dbcc04ec4f06daaabf58171ecfd",
+  "../SpecNaacl/configs/qwen25_3b/b200.env": "dba1e1103b417e3ce09775f04c7ab9078dfa36e4285ba0cc21e70f5bb685502c"
+}

@@ -148,7 +148,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                         min_draft_token_length=3, draft_token_length_c=0.75,
                         statistical_time=True,return_all_draft_input=False,
                         max_length=2048, max_new_tokens=None, teacher_trace=None,
-                        observation_hook=None,
+                        observation_hook=None, verification_hook=None, timing_hook=None,
                         ):
 
 
@@ -158,6 +158,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         if input_ids.shape[0] != 1 or (repeated_generate_nums or 1) != 1 or max_new_tokens < 2:
             raise ValueError('Exact response cap is supported only for single-response evaluation, cap >= 2')
     emitted_response_tokens = 1  # target prefill sample
+    original_prompt_mask=attention_mask
+    if timing_hook is not None:timing_hook.phase('prefill',input_ids.shape[0])
 
     class Node:
         
@@ -192,6 +194,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         draft_logits=model.lm_head(draft_hidden_states.to(model.target_model.dtype))
         draft_logits=draft_logits.softmax(dim=-1)
         root_observation = None
+        proposal_stages=[]
         if observation_hook is not None:
             root_observation = dict(q=draft_logits[0, 0].detach(),
                                     root_token=root_input_ids[0, 0].detach().clone(),
@@ -199,6 +202,9 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                                     cache_length=draft_past_key_values_tree[0][0].shape[-2])
         
         next_token_values, draft_next_token=torch.topk(draft_logits, k=draft_k, dim=-1) # draft_next_token.shape (bsz, 1, draft_k)
+        if verification_hook is not None:
+            proposal_root=draft_next_token.detach().clone()
+            proposal_beams=torch.arange(draft_k,device=device).expand(bsz,-1)
         draft_confidences=next_token_values.view(bsz, -1) # (bsz, draft_k)
         
         past_kv_len=draft_past_key_values_tree[0][0].shape[-2]
@@ -272,9 +278,13 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             
             
             next_token_values,draft_next_token=torch.topk(draft_logits, k=draft_k, dim=-1) # (bsz, seq, draft_k)
+            if verification_hook is not None:
+                proposal_stages.append((proposal_beams.detach().clone(),draft_next_token.detach().clone()))
 
             draft_confidences=draft_confidences.unsqueeze(-1)*next_token_values
             draft_top_k_token_values, draft_top_k_token_indices=torch.topk(draft_confidences.view(bsz, -1), k=draft_k, dim=-1) # (bsz, draft_k)
+            if verification_hook is not None:
+                proposal_beams=draft_k+(idx_token-1)*draft_k*draft_k+draft_top_k_token_indices
 
             past_kv_len=draft_past_key_values_tree[0][0].shape[-2]
             
@@ -349,9 +359,18 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                     
         next_token_trees=total_input_ids.gather(index=chosen_index, dim=-1)
         target_position_ids=total_position_ids.gather(index=chosen_index, dim=-1)
+        proposal_observation=None
+        if verification_hook is not None:
+            # Compact candidate IDs only: never transfer logits/probability vectors.
+            roots=proposal_root.cpu().tolist()
+            proposal_observation=[{-1:row[0]} for row in roots]
+            for beams,candidates in proposal_stages:
+                for row,(indices,tokens) in enumerate(zip(beams.cpu().tolist(),candidates.cpu().tolist())):
+                    for index,ids in zip(indices,tokens):proposal_observation[row][index]=ids
                 
         return {
             'root_observation':root_observation,
+            'proposal_observation':proposal_observation,
             'trees':trees,
             'trees_chosen_index':chosen_index_list,
             'next_token_trees':next_token_trees,
@@ -507,6 +526,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
         raise ValueError('"do_sample" must be True or False')
     
     generated_sequences=target_next_token
+    if verification_hook is not None:
+        verification_hook.prefill(input_ids,original_prompt_mask,target_next_token,max(1,repeated_generate_nums or 1))
     if (target_next_token==eos_token_id).all():
         from helper.generation_edges import prefill_eos_output
         executor.shutdown(wait=True)
@@ -629,6 +650,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
                         dtype=torch.bfloat16 if model.dtype==torch.bfloat16 else torch.float16):
     
         
+        if timing_hook is not None:timing_hook.phase('proposal',bsz)
         outputs=draft_generate(model,next_feature_states,draft_hidden_states,draft_past_key_values,
                             draft_token_length,past_position_ids_tensor,padding_positions_tensor,
                             draft_k=draft_k, draft_total_token=draft_total_token,
@@ -646,6 +668,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
     total_prefill_time=time.time()-prefill_time_start
 
     for token_num in range(1,max_length):
+        if timing_hook is not None:timing_hook.phase('verification',bsz)
         
         past_kv_len=target_past_key_values.get_seq_length()
         kv_length=past_kv_len+draft_total_token+1
@@ -827,6 +850,17 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             else:
                 acc_length[idx_tree]=0
 
+        if verification_hook is not None:
+            # Match the existing batch-level max_length stop below, accounting
+            # for prompt padding and prior response padding without any GPU read.
+            length_stop=max(input_ids.shape[-1]+generated_sequences.shape[-1]-len(padding_positions[i])+len(next_token[i])
+                            for i in range(bsz))>=max_length
+            verification_hook.verification(trees=target_trees,chosen=trees_chosen_index,
+                proposals=outputs['proposal_observation'],sampled=target_next_token_tree_list,
+                paths=chosen_index,emitted=next_token,canonical=residual_index,
+                round_index=verification_batches-1,past_kv_len=past_kv_len,active=bsz,
+                draft_k=draft_k,budget=draft_total_token,depth_limit=draft_token_length,
+                capped=length_stop or (max_new_tokens is not None and emitted_response_tokens>=max_new_tokens))
         max_acc_length=max(acc_length)
         last_valid_index=[max_acc_length-1]*bsz 
 
@@ -1068,6 +1102,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             torch.cuda.synchronize()
             draft_time_start=time.time()
 
+        if timing_hook is not None:timing_hook.phase('proposal',bsz)
         with torch.amp.autocast(str(model.target_model.device),
                             dtype=torch.bfloat16 if model.dtype==torch.bfloat16 else torch.float16):
         
@@ -1106,6 +1141,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer,
             total_draft_time+=time.time()-draft_time_start
             
             
+    if timing_hook is not None:timing_hook.phase('postprocessing',bsz)
     post_time_start=time.time()
             
     for idx_batch in range(bsz):

@@ -1,0 +1,9 @@
+{
+  "checkpoints": [
+    "30",
+    "100",
+    "200",
+    "500"
+  ],
+  "output_dir": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/.cache/e2e6_final_gpu/test_collect_three_fixture_che0/analysis_e2_e6"
+}

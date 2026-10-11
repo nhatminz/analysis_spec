@@ -1,0 +1,56 @@
+{
+  "milestones": [
+    {
+      "path": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/.cache/e2e6_final_gpu/test_collect_three_fixture_che0/checkpoints/step_000030.pt",
+      "attempt": 30,
+      "draft_weights_sha256": "19647a94ba13246090e6f064fccd868581481dbe30037d3d23300927d182ba9e",
+      "format": "pure_fastgrpo_e2_e6_v1",
+      "policy_step": 30,
+      "sha256": "0c34a9ca1932d3daba73519f6ef7977235e6488e835686a921e7d253d25e2e14",
+      "size": 53067,
+      "target_lora_sha256": "f6d8012c591e2b348a8b966a9ac340915ca60f1c89d2ec6f308fa7ace96cc8b0"
+    },
+    {
+      "path": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/.cache/e2e6_final_gpu/test_collect_three_fixture_che0/checkpoints/step_000100.pt",
+      "attempt": 100,
+      "draft_weights_sha256": "19647a94ba13246090e6f064fccd868581481dbe30037d3d23300927d182ba9e",
+      "format": "pure_fastgrpo_e2_e6_v1",
+      "policy_step": 100,
+      "sha256": "30cc664295657456aba83f3653b365b8479bebdcfb8f2eb4ca983b85baf5a058",
+      "size": 53067,
+      "target_lora_sha256": "f6d8012c591e2b348a8b966a9ac340915ca60f1c89d2ec6f308fa7ace96cc8b0"
+    },
+    {
+      "path": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/.cache/e2e6_final_gpu/test_collect_three_fixture_che0/checkpoints/step_000200.pt",
+      "attempt": 200,
+      "draft_weights_sha256": "19647a94ba13246090e6f064fccd868581481dbe30037d3d23300927d182ba9e",
+      "format": "pure_fastgrpo_e2_e6_v1",
+      "policy_step": 200,
+      "sha256": "c6ebe14f5224fa814970df54d3ea25a1af1d1beb35ff3dead164850a41b2324d",
+      "size": 53067,
+      "target_lora_sha256": "f6d8012c591e2b348a8b966a9ac340915ca60f1c89d2ec6f308fa7ace96cc8b0"
+    },
+    {
+      "path": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/.cache/e2e6_final_gpu/test_collect_three_fixture_che0/checkpoints/step_000500.pt",
+      "attempt": 500,
+      "draft_weights_sha256": "19647a94ba13246090e6f064fccd868581481dbe30037d3d23300927d182ba9e",
+      "format": "pure_fastgrpo_e2_e6_v1",
+      "policy_step": 500,
+      "sha256": "10844a6160c0bedc6daaebbaf4fad0ad8970ec3cda3bfa5f0e5431701b84cfb6",
+      "size": 53067,
+      "target_lora_sha256": "f6d8012c591e2b348a8b966a9ac340915ca60f1c89d2ec6f308fa7ace96cc8b0"
+    }
+  ],
+  "missing": [],
+  "latest": {
+    "path": "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/.cache/e2e6_final_gpu/test_collect_three_fixture_che0/checkpoints/resume_step_000500_attempt_00000500_1791667706663087941.pt",
+    "attempt": 500,
+    "draft_weights_sha256": "19647a94ba13246090e6f064fccd868581481dbe30037d3d23300927d182ba9e",
+    "format": "pure_fastgrpo_e2_e6_v1",
+    "policy_step": 500,
+    "sha256": "10844a6160c0bedc6daaebbaf4fad0ad8970ec3cda3bfa5f0e5431701b84cfb6",
+    "size": 53067,
+    "target_lora_sha256": "f6d8012c591e2b348a8b966a9ac340915ca60f1c89d2ec6f308fa7ace96cc8b0"
+  },
+  "verified_rollouts": 4
+}
