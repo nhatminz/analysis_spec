@@ -1,0 +1,93 @@
+usage: run_e2_e6_external.py [-h] [--model MODEL] [--train-path TRAIN_PATH]
+                             [--test-path TEST_PATH]
+                             [--draft-checkpoint DRAFT_CHECKPOINT]
+                             [--draft-target-config DRAFT_TARGET_CONFIG]
+                             [--output-dir OUTPUT_DIR] [--dtype DTYPE]
+                             [--attention-implementation ATTENTION_IMPLEMENTATION]
+                             [--train-steps TRAIN_STEPS]
+                             [--batch-size BATCH_SIZE]
+                             [--responses-per-prompt RESPONSES_PER_PROMPT]
+                             [--accumulation-steps ACCUMULATION_STEPS]
+                             [--draft-accumulation-steps DRAFT_ACCUMULATION_STEPS]
+                             [--seed SEED] [--eval-seed EVAL_SEED]
+                             [--eval-rollouts EVAL_ROLLOUTS]
+                             [--bootstrap-samples BOOTSTRAP_SAMPLES]
+                             [--save-every SAVE_EVERY]
+                             [--max-length MAX_LENGTH]
+                             [--max-prompt-length MAX_PROMPT_LENGTH]
+                             [--max-training-token MAX_TRAINING_TOKEN]
+                             [--max-training-padding-gap MAX_TRAINING_PADDING_GAP]
+                             [--draft-ce-chunk-size DRAFT_CE_CHUNK_SIZE]
+                             [--verification-capacity VERIFICATION_CAPACITY]
+                             [--max-verification-num MAX_VERIFICATION_NUM]
+                             [--max-draft-token-length MAX_DRAFT_TOKEN_LENGTH]
+                             [--max-draft-k MAX_DRAFT_K]
+                             [--min-draft-token-length MIN_DRAFT_TOKEN_LENGTH]
+                             [--max-rollout-attempts MAX_ROLLOUT_ATTEMPTS]
+                             [--target-lr TARGET_LR] [--draft-lr DRAFT_LR]
+                             [--beta BETA] [--epsilon EPSILON]
+                             [--temperature TEMPERATURE] [--top-p TOP_P]
+                             [--draft-token-length-c DRAFT_TOKEN_LENGTH_C]
+                             [--checkpoints CHECKPOINTS] [--require-b200]
+                             [--smoke]
+                             [--target-gradient-checkpointing | --no-target-gradient-checkpointing]
+                             [--source-run SOURCE_RUN]
+                             [--source-step SOURCE_STEP]
+                             {train,resume,collect,analyze,all,check}
+
+Frozen E2–E6 collection from a paired SpecNaacl target/draft export.
+
+positional arguments:
+  {train,resume,collect,analyze,all,check}
+
+options:
+  -h, --help            show this help message and exit
+  --model MODEL
+  --train-path TRAIN_PATH
+  --test-path TEST_PATH
+  --draft-checkpoint DRAFT_CHECKPOINT
+  --draft-target-config DRAFT_TARGET_CONFIG
+  --output-dir OUTPUT_DIR
+  --dtype DTYPE
+  --attention-implementation ATTENTION_IMPLEMENTATION
+  --train-steps TRAIN_STEPS
+  --batch-size BATCH_SIZE
+  --responses-per-prompt RESPONSES_PER_PROMPT
+  --accumulation-steps ACCUMULATION_STEPS
+  --draft-accumulation-steps DRAFT_ACCUMULATION_STEPS
+  --seed SEED
+  --eval-seed EVAL_SEED
+  --eval-rollouts EVAL_ROLLOUTS
+  --bootstrap-samples BOOTSTRAP_SAMPLES
+  --save-every SAVE_EVERY
+  --max-length MAX_LENGTH
+  --max-prompt-length MAX_PROMPT_LENGTH
+  --max-training-token MAX_TRAINING_TOKEN
+  --max-training-padding-gap MAX_TRAINING_PADDING_GAP
+  --draft-ce-chunk-size DRAFT_CE_CHUNK_SIZE
+  --verification-capacity VERIFICATION_CAPACITY
+  --max-verification-num MAX_VERIFICATION_NUM
+  --max-draft-token-length MAX_DRAFT_TOKEN_LENGTH
+  --max-draft-k MAX_DRAFT_K
+  --min-draft-token-length MIN_DRAFT_TOKEN_LENGTH
+  --max-rollout-attempts MAX_ROLLOUT_ATTEMPTS
+  --target-lr TARGET_LR
+  --draft-lr DRAFT_LR
+  --beta BETA
+  --epsilon EPSILON
+  --temperature TEMPERATURE
+  --top-p TOP_P
+  --draft-token-length-c DRAFT_TOKEN_LENGTH_C
+  --checkpoints CHECKPOINTS
+                        Comma-separated milestones; missing milestones are
+                        reported and skipped
+  --require-b200
+  --smoke               One evaluation rollout; still needs a genuine
+                        pretrained draft/checkpoint
+  --target-gradient-checkpointing, --no-target-gradient-checkpointing
+  --source-run SOURCE_RUN
+                        SpecNaacl run containing checkpoints/target and
+                        checkpoints/draft
+  --source-step SOURCE_STEP
+                        Exported checkpoint label, not necessarily target
+                        optimizer steps

@@ -1,0 +1,78 @@
+{
+  "timestamp_utc": "2026-10-11T02:44:59.072617+00:00",
+  "purpose": "Read-only import of paired SpecNaacl target/step235 and draft/step235.pth for frozen E2-E6 on a separate output",
+  "tests": {
+    "focused_cuda_suite": {
+      "passed": 28,
+      "runtime_s": 30.25,
+      "log": "validation/e2_e6_external_tests.log"
+    },
+    "external_cpu_only": {
+      "passed": 5,
+      "cuda_skipped": 1,
+      "runtime_s": 4.3,
+      "log": "validation/e2_e6_external_cpu.log"
+    },
+    "bash_syntax": "passed",
+    "existing_tracked_python_modified": []
+  },
+  "short_smoke": {
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "model": "Tiny random Qwen test fixture, not production Qwen2.5-3B",
+    "external_label": 235,
+    "real_training_checkpoint": false,
+    "source_reported_steps_fixture": 901,
+    "event_logging_wall_s": 0.44499550946056843,
+    "replay_wall_s": 0.13190611731261015,
+    "token_equivalence": true,
+    "reconstruction": true,
+    "events": 54,
+    "offline_cli_report_generated": true,
+    "repeat_collect_skipped": true
+  },
+  "specnaacl_read_only": true,
+  "reference_hashes_unchanged": true,
+  "reference_audit": {
+    "../SpecNaacl/grpo_speculative.py": {
+      "reference_sha256": "4ecf3eb45bb8124a89c23db76b275b5b2784cefdf249dc975822ee9892c49923",
+      "current_sha256": "4ecf3eb45bb8124a89c23db76b275b5b2784cefdf249dc975822ee9892c49923"
+    },
+    "../SpecNaacl/helper/get_QAs.py": {
+      "reference_sha256": "72974e50046cd70fe956a00a787fdaa070bce36110ee239a7d4ecd94dcfd58d2",
+      "current_sha256": "72974e50046cd70fe956a00a787fdaa070bce36110ee239a7d4ecd94dcfd58d2"
+    },
+    "../SpecNaacl/helper/rewards.py": {
+      "reference_sha256": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30",
+      "current_sha256": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30"
+    },
+    "../SpecNaacl/helper/fastgrpo_generate.py": {
+      "reference_sha256": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93",
+      "current_sha256": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93"
+    },
+    "../SpecNaacl/helper/fastgrpo_training.py": {
+      "reference_sha256": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359",
+      "current_sha256": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359"
+    },
+    "../SpecNaacl/helper/modeling_draft.py": {
+      "reference_sha256": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4",
+      "current_sha256": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4"
+    },
+    "../SpecNaacl/configs/_shared/b200_common.env": {
+      "reference_sha256": "36e72c90151608db667dd83d89fc4af60ff49dbcc04ec4f06daaabf58171ecfd",
+      "current_sha256": "36e72c90151608db667dd83d89fc4af60ff49dbcc04ec4f06daaabf58171ecfd"
+    },
+    "../SpecNaacl/configs/qwen25_3b/b200.env": {
+      "reference_sha256": "dba1e1103b417e3ce09775f04c7ab9078dfa36e4285ba0cc21e70f5bb685502c",
+      "current_sha256": "dba1e1103b417e3ce09775f04c7ab9078dfa36e4285ba0cc21e70f5bb685502c"
+    }
+  },
+  "production_b200_checkpoint_accessible": false,
+  "production_checkpoint_evaluated": false,
+  "no_training_launched": true,
+  "no_active_training_files_modified": true,
+  "limitations": [
+    "Actual B200 step235 files are only available on the user machine and were not evaluated here",
+    "Physical GPU 1 selection is supplied in the production commands; local CUDA tests used the available RTX 3090",
+    "External exported step labels do not necessarily count completed target optimizer updates"
+  ]
+}

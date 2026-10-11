@@ -314,3 +314,54 @@ To run tests locally, keep their scratch files inside `analysis_spec`:
 PYTHONPATH="$PWD/.testdeps:$PWD" "$PYTHON_BIN" -m pytest -q \
   --basetemp "$PWD/.cache/e2_e6_pytest"
 ```
+
+## Frozen evaluation of an existing SpecNaacl step235 export on GPU 1
+
+The separate external launcher reads the paired target LoRA and online draft
+without training, importing any SpecNaacl runtime code, or changing the active
+E2–E6 training files. It creates an immutable evaluation-only snapshot and shared
+logs inside a separate `analysis_spec` output directory; it creates no training
+resume pointer. It requires no access to the original pretrained draft.
+
+In the activated B200 environment, after copying the new external launcher/module:
+
+```bash
+cd /workspace/storage-shared/nlp/minhpn19/analysis_spec
+export PYTHON_BIN=python3
+export CUDA_VISIBLE_DEVICES=1
+export MODEL=/workspace/storage-shared/models/Qwen2.5-3B-Instruct
+export TRAIN_DATASET_PATH=/workspace/storage-shared/nlp/minhpn19/data/simplelr_abel_level3to5/train.parquet
+export TEST_DATASET_PATH=/workspace/storage-shared/nlp/minhpn19/data/simplelr_abel_level3to5/test.parquet
+export SOURCE_RUN=/workspace/storage-shared/nlp/minhpn19/SpecNaacl/outputs/train/qwen25_3b/qwen25_3b__simplelr__method-fastgrpo__seed42__20261008T104039__66c54263
+export EVAL_OUTPUT_DIR="$PWD/outputs/e2_e6_external_step235"
+
+# First rollout of the immutable 20-rollout plan (8 prompts x 8 responses).
+bash run_e2_e6_external.sh collect --require-b200 \
+  --source-run "$SOURCE_RUN" --source-step 235 \
+  --output-dir "$EVAL_OUTPUT_DIR" --eval-rollouts 20 --eval-seed 2026 --smoke
+
+# Analyze the available partial log; a single rollout cannot support a CI.
+bash run_e2_e6_external.sh analyze --source-step 235 \
+  --output-dir "$EVAL_OUTPUT_DIR" --bootstrap-samples 2000
+
+# Optional: finish the remaining 19 rollouts for this checkpoint, then reanalyze.
+bash run_e2_e6_external.sh collect --require-b200 \
+  --source-run "$SOURCE_RUN" --source-step 235 \
+  --output-dir "$EVAL_OUTPUT_DIR" --eval-rollouts 20 --eval-seed 2026
+bash run_e2_e6_external.sh analyze --source-step 235 \
+  --output-dir "$EVAL_OUTPUT_DIR" --bootstrap-samples 2000
+
+bash run_e2_e6_external.sh check --source-step 235 --output-dir "$EVAL_OUTPUT_DIR"
+tail -f "$EVAL_OUTPUT_DIR/logs/collect.jsonl"
+```
+
+The external launcher uses `checkpoints/target/step235/adapter_model.*` and
+`checkpoints/draft/step235.pth` together. Sampling/batch defaults are read from
+the source run's resolved config; explicit evaluation flags remain available.
+It preserves the source label **235** without treating it as 235 target optimizer
+updates. If the matching final summary reports actual target optimizer steps,
+that separate count is recorded in `external_checkpoint_manifest.json` and the
+Markdown report. Results/PDFs are under `$EVAL_OUTPUT_DIR/analysis_e2_e6/`.
+`CUDA_VISIBLE_DEVICES=1` selects physical GPU 1; PyTorch sees it as local `cuda:0`.
+The external launcher ignores inherited training `OUTPUT_DIR` unless its own
+`--output-dir` is explicitly supplied, and refuses an active training output.
