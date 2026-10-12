@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/run_rq2_repeated_misses.py", line 63, in <module>
+    if __name__=='__main__':main()
+                            ^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/run_rq2_repeated_misses.py", line 48, in main
+    destination,rows,tokenizer,manifest=prepare(a.root,a.output_dir,c,source,source_path,a.steps,
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/rq2/runtime.py", line 72, in prepare
+    if not identities:raise FileNotFoundError(f'No compatible checkpoints for {steps}; missing {missing}. No model was loaded.')
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: No compatible checkpoints for [30, 100, 200]; missing [30, 100, 200]. No model was loaded.

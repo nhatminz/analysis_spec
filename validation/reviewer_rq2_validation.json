@@ -1,0 +1,400 @@
+{
+  "actual_gpu_validation": {
+    "edge_cases": [
+      {
+        "async_update": false,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 48,
+            "ordinary_events": 48,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0007928678533062339,
+            "fast_lr": 0.01,
+            "misses": 48,
+            "ordinary_events": 48,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 13.0
+          }
+        ],
+        "edge": "ordinary",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      },
+      {
+        "async_update": true,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 48,
+            "ordinary_events": 48,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0007928678533062339,
+            "fast_lr": 0.01,
+            "misses": 48,
+            "ordinary_events": 48,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 13.0
+          }
+        ],
+        "edge": "ordinary",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      },
+      {
+        "async_update": false,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 24,
+            "ordinary_events": 24,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0011373109882697463,
+            "fast_lr": 0.01,
+            "misses": 24,
+            "ordinary_events": 24,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 13.0
+          }
+        ],
+        "edge": "swap_removal",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      },
+      {
+        "async_update": true,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 24,
+            "ordinary_events": 24,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0011373109882697463,
+            "fast_lr": 0.01,
+            "misses": 24,
+            "ordinary_events": 24,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 13.0
+          }
+        ],
+        "edge": "swap_removal",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      },
+      {
+        "async_update": false,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 0,
+            "ordinary_events": 0,
+            "rounds": 0,
+            "target_forwards": 1,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.01,
+            "misses": 0,
+            "ordinary_events": 0,
+            "rounds": 0,
+            "target_forwards": 1,
+            "updates": 0.0
+          }
+        ],
+        "edge": "all_eos",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      },
+      {
+        "async_update": true,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 0,
+            "ordinary_events": 0,
+            "rounds": 0,
+            "target_forwards": 1,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.01,
+            "misses": 0,
+            "ordinary_events": 0,
+            "rounds": 0,
+            "target_forwards": 1,
+            "updates": 0.0
+          }
+        ],
+        "edge": "all_eos",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      },
+      {
+        "async_update": false,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 36,
+            "ordinary_events": 36,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0028698022942990065,
+            "fast_lr": 0.01,
+            "misses": 36,
+            "ordinary_events": 36,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 13.0
+          }
+        ],
+        "edge": "verified_eos",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      },
+      {
+        "async_update": true,
+        "diagnostics": [
+          {
+            "B_final_norm": 0.0,
+            "fast_lr": 0.0,
+            "misses": 36,
+            "ordinary_events": 36,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 0.0
+          },
+          {
+            "B_final_norm": 0.0028698022942990065,
+            "fast_lr": 0.01,
+            "misses": 36,
+            "ordinary_events": 36,
+            "rounds": 13,
+            "target_forwards": 14,
+            "updates": 13.0
+          }
+        ],
+        "edge": "verified_eos",
+        "gpu": "NVIDIA GeForce RTX 3090",
+        "tiny_validation_fixture": true
+      }
+    ],
+    "gpu": "NVIDIA GeForce RTX 3090",
+    "integrated_smoke_arm_diagnostics": {
+      "off": {
+        "B_reset_verified": true,
+        "frozen_weights_verified": true,
+        "logging_token_counter_equivalence": true,
+        "opd_final_b_max_abs": 0.0,
+        "opd_final_b_norm": 0.0,
+        "opd_invalid_states": 0.0,
+        "opd_nonfinite_kl_states": 0.0,
+        "opd_selected_states": 144.0,
+        "opd_state_weight": 144.0,
+        "opd_updates": 0.0,
+        "projector_sha256": "e548719254ebc5d163deb9206905db01923a16322c336b98348e13ea4a57e7a5",
+        "valid_feedback_available": true,
+        "wall_s": 1.0330687146633863
+      },
+      "on": {
+        "B_reset_verified": true,
+        "frozen_weights_verified": true,
+        "logging_token_counter_equivalence": true,
+        "opd_final_b_max_abs": 0.00021421397104859352,
+        "opd_final_b_norm": 0.0008160977740772069,
+        "opd_invalid_states": 0.0,
+        "opd_nonfinite_kl_states": 0.0,
+        "opd_selected_states": 144.0,
+        "opd_state_weight": 144.0,
+        "opd_updates": 12.0,
+        "projector_sha256": "e548719254ebc5d163deb9206905db01923a16322c336b98348e13ea4a57e7a5",
+        "valid_feedback_available": true,
+        "wall_s": 0.1862205360084772
+      }
+    },
+    "model": "tiny randomly initialized Qwen2 correctness fixture, NOT Qwen2.5-3B production",
+    "projector": "initialized"
+  },
+  "external_reference_matches_current_HEAD": {
+    "../SpecNaacl/configs/_shared/b200_common.env": true,
+    "../SpecNaacl/configs/qwen25_3b/b200.env": true,
+    "../SpecNaacl/grpo_speculative.py": false,
+    "../SpecNaacl/helper/fastgrpo_generate.py": true,
+    "../SpecNaacl/helper/fastgrpo_training.py": true,
+    "../SpecNaacl/helper/get_QAs.py": true,
+    "../SpecNaacl/helper/modeling_draft.py": true,
+    "../SpecNaacl/helper/rewards.py": true
+  },
+  "implementation_files": {
+    "README_REVIEWER_RQ2.md": "85e41d93f253df2d1944f9a363338fea2c8451fae878b795ca61336a3eddaf49",
+    "helper/opd_generate.py": "6918ad5d452bdb0e63bd6782cc331f22963f77d80912b455cfc503c237da8e15",
+    "plot_motivation_controls.py": "784f0b0fd93048f32e622c241f1d6c504ba7c4ad54a2c48f3f308615040d41a7",
+    "reviewer_controls/__init__.py": "2a55a009dd65ad62043c3bd9f17afe56c4ecc29f68fbbfce7d5de33f4163ad7a",
+    "reviewer_controls/offline.py": "4f7f5a75be90dd912a01a3ae40fbe00c855311bd4efd8b565c1595146b4e3330",
+    "reviewer_controls/plotting.py": "a80dabfe6a4e89aed5dc8493846d5d40b42ab72ffeb3112bf79ab6f7380eea2d",
+    "reviewer_controls/statistics.py": "5547b5ae04af33b1aba1e853cc71a4e29701be7e0c00d632c51bb48cb5010810",
+    "rq2/__init__.py": "6c08040c10c89ea902109bbc732963591a5bc19e4d6d596278804b8503aae1f1",
+    "rq2/analysis.py": "75faba1b6547b7beee1e7716f88d8ce2858b10af69e3a88040972069919c1e7a",
+    "rq2/checkpoints.py": "2fedf626f5f41a9c836b5c77445dd329afeeeeea53c32397a27eaafc4b8db315",
+    "rq2/events.py": "4b742629e70388e81765e41f69c887e0089c950dcbf62319c966e0f34b61fc44",
+    "rq2/runtime.py": "d2d12d6c42918c1e59a1dc0609125dff4273a6b2dfa44efc3d2d829d8a8fbb4f",
+    "run_reviewer_controls.py": "3c41696e3f2f1a6a9f401eab5b2a25b8f2e6b8c859d6897335af029ab59e0f3b",
+    "run_reviewer_controls_b200.sh": "a36e0447cbce08bcf36999563e95479a144ae8b63175e92936f8fd4ae89007e8",
+    "run_rq2_repeated_misses.py": "388f8000872e344ee3ca164a2c146502d1e8fadea2ca64c05c6959d45e211e36",
+    "run_rq2_repeated_misses_b200.sh": "e7fd3289ef7613b78c38908fed4bf5e4af263962e5143a920640a23ef5f9443a",
+    "tests/test_reviewer_controls.py": "31fa7591e29ad011e7285f00ff3e6e0dad7dc17e43ea9bd04c6eeeea58164be6",
+    "tests/test_rq2_repeated_misses.py": "7482f0e6adc693dd84faca66394ea37805a5a91cde01007ece527d6feff5e387",
+    "tests/test_rq2_repeated_misses_cuda.py": "9655283ecb6040cf0a9e320e7bab1b7b52da96d1f2165265de8646a681e1e564"
+  },
+  "long_training_launched": false,
+  "preserved_original_analysis_training_and_kernels": {
+    "e2e6/analysis.py": true,
+    "e2e6/checkpoints.py": true,
+    "e2e6/collect.py": true,
+    "e2e6/config.py": true,
+    "e2e6/events.py": true,
+    "e2e6/runtime.py": true,
+    "e2e6/train.py": true,
+    "helper/fastgrpo_generate.py": true,
+    "helper/fastgrpo_model.py": true,
+    "helper/opd_reflex.py": true,
+    "helper/opd_reflex_kernels.py": true,
+    "motivation/runtime.py": true,
+    "run_e2_e6.py": true
+  },
+  "production_attempts": {
+    "task1": {
+      "command": [
+        "/mnt/hdd/nhatminh/.specnaacl-env-modern/bin/python",
+        "run_reviewer_controls.py",
+        "--steps",
+        "30",
+        "100",
+        "200"
+      ],
+      "exit_code": 1,
+      "log": "validation/reviewer_controls_production_attempt.log",
+      "wall_s": 1.414849167689681
+    },
+    "task2": {
+      "command": [
+        "/mnt/hdd/nhatminh/.specnaacl-env-modern/bin/python",
+        "run_rq2_repeated_misses.py",
+        "check",
+        "--projector-mode",
+        "initialized"
+      ],
+      "exit_code": 1,
+      "log": "validation/reviewer_rq2_production_preflight.log",
+      "wall_s": 3.3762511909008026
+    }
+  },
+  "production_confidence_intervals": null,
+  "production_inputs": {
+    "b200_collection": false,
+    "compatible_production_steps": [],
+    "local_collection": false
+  },
+  "production_numerical_findings": null,
+  "production_task1_completed": false,
+  "production_task2_completed": false,
+  "reference_audit": {
+    "../SpecNaacl/configs/_shared/b200_common.env": {
+      "actual": "36e72c90151608db667dd83d89fc4af60ff49dbcc04ec4f06daaabf58171ecfd",
+      "expected": "36e72c90151608db667dd83d89fc4af60ff49dbcc04ec4f06daaabf58171ecfd",
+      "unchanged": true
+    },
+    "../SpecNaacl/configs/qwen25_3b/b200.env": {
+      "actual": "dba1e1103b417e3ce09775f04c7ab9078dfa36e4285ba0cc21e70f5bb685502c",
+      "expected": "dba1e1103b417e3ce09775f04c7ab9078dfa36e4285ba0cc21e70f5bb685502c",
+      "unchanged": true
+    },
+    "../SpecNaacl/grpo_speculative.py": {
+      "actual": "61ececcac5b3c4546c1a05cf5784eb633010bc5918c9abbab2e9a22eafd45224",
+      "expected": "4ecf3eb45bb8124a89c23db76b275b5b2784cefdf249dc975822ee9892c49923",
+      "unchanged": false
+    },
+    "../SpecNaacl/helper/fastgrpo_generate.py": {
+      "actual": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93",
+      "expected": "dd9495d765b9669a6b673e61e13e2af6f073b4140b00adb1bf42c4bab64efd93",
+      "unchanged": true
+    },
+    "../SpecNaacl/helper/fastgrpo_training.py": {
+      "actual": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359",
+      "expected": "bbc0971609b7ac0e4961921155ff844faec8de428303fda7e76882fa3b7a9359",
+      "unchanged": true
+    },
+    "../SpecNaacl/helper/get_QAs.py": {
+      "actual": "72974e50046cd70fe956a00a787fdaa070bce36110ee239a7d4ecd94dcfd58d2",
+      "expected": "72974e50046cd70fe956a00a787fdaa070bce36110ee239a7d4ecd94dcfd58d2",
+      "unchanged": true
+    },
+    "../SpecNaacl/helper/modeling_draft.py": {
+      "actual": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4",
+      "expected": "5887fdbdac155af5c01c99c80249cd44baa8e5f9136fd5915aaf325047d21df4",
+      "unchanged": true
+    },
+    "../SpecNaacl/helper/rewards.py": {
+      "actual": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30",
+      "expected": "4a14324812d999a31e8b414cd8dca33d98c275876e7b81ca1e0847874ae55f30",
+      "unchanged": true
+    }
+  },
+  "reference_audit_note": "The historical reference hash list predates this task. External SpecNaacl files are being edited concurrently in the shared workspace (its git status changed during read-only inspection). This task issued no writes outside analysis_spec and did not revert or alter those external edits. Do not interpret the old reference hashes as a before/after audit of this task.",
+  "scope": "Exactly offline E2/E3/E6 reviewer controls and actual frozen SPARK OFF/ON repeated draft misses",
+  "statistically_supported_scientific_conclusions": [],
+  "tests": {
+    "reviewer_rq2_cpu.log": {
+      "passed": 60,
+      "runtime_s": 42.99,
+      "skipped": 161
+    },
+    "reviewer_rq2_cpu_final.log": {
+      "passed": 19,
+      "runtime_s": 10.59,
+      "skipped": 0
+    },
+    "reviewer_rq2_cuda.log": {
+      "passed": 8,
+      "runtime_s": 11.36,
+      "skipped": 0
+    },
+    "reviewer_rq2_gpu_regression.log": {
+      "passed": 157,
+      "runtime_s": 20.63,
+      "skipped": 0
+    }
+  },
+  "timestamp_utc": "2026-10-12T10:41:26.482642+00:00"
+}

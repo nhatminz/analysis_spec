@@ -76,7 +76,7 @@ def _cache_seq_length(cache):
     return int(key.shape[-2])
 
 @torch.inference_mode()
-def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=False, repeated_generate_nums=None, temperature=0.8, top_p=0.9, top_k=None, verification_capacity=160, max_draft_token_length=5, max_draft_k=8, max_verification_num=160, min_draft_token_length=3, draft_token_length_c=0.75, statistical_time=False, return_all_draft_input=False, max_length=2048, method='opd_reflex', opd_rank=8, opd_topk=16, opd_fast_lr=0.01, opd_visited_weight=1.0, opd_frontier_weight=1.0, opd_update_stream=True, opd_profile=False, opd_diagnostics=False, opd_backend='auto', opd_train_projector=False, kv_gather_strategy='stacked', max_new_tokens=None):
+def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=False, repeated_generate_nums=None, temperature=0.8, top_p=0.9, top_k=None, verification_capacity=160, max_draft_token_length=5, max_draft_k=8, max_verification_num=160, min_draft_token_length=3, draft_token_length_c=0.75, statistical_time=False, return_all_draft_input=False, max_length=2048, method='opd_reflex', opd_rank=8, opd_topk=16, opd_fast_lr=0.01, opd_visited_weight=1.0, opd_frontier_weight=1.0, opd_update_stream=True, opd_profile=False, opd_diagnostics=False, opd_backend='auto', opd_train_projector=False, kv_gather_strategy='stacked', max_new_tokens=None, verification_hook=None):
     if max_new_tokens is not None:
         if input_ids.shape[0] != 1 or (repeated_generate_nums or 1) != 1 or max_new_tokens < 2:
             raise ValueError('Exact response cap is supported only for single-response evaluation, cap >= 2')
@@ -112,6 +112,9 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
         head_inputs = draft_hidden_states.to(model.target_model.dtype)
         draft_logits = model.lm_head(head_inputs)
         (next_token_values, _, draft_next_token) = opd.propose(draft_logits, draft_hidden_states, draft_k, vocabulary_ids, root=True, context_offset=0, head_inputs=head_inputs)
+        # Optional observation owns compact top-k token IDs BEFORE pruning.
+        # No probabilities, model forwards, sampling or runtime state are added.
+        proposal_observation = [(0,draft_next_token.detach().clone())] if verification_hook is not None else None
         # propose() returns a view of reused proposal_q scratch. Both the first
         # beam and confidences[0] must survive later expansion proposals. Merely
         # view()/detach() aliases that scratch and silently rewrites tree scores.
@@ -168,6 +171,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
             head_inputs = draft_hidden_states.to(model.target_model.dtype)
             draft_logits = model.lm_head(head_inputs)
             (next_token_values, _, draft_next_token) = opd.propose(draft_logits, draft_hidden_states, draft_k, vocabulary_ids, context_offset=1 + (idx_token - 1) * draft_k, head_inputs=head_inputs)
+            if verification_hook is not None:
+                proposal_observation.append((1+(idx_token-1)*draft_k,draft_next_token.detach().clone()))
             branches=opd.tree_branch_confidence.view(-1)[:bsz*draft_k*draft_k].view(bsz,draft_k,draft_k)
             torch.mul(draft_confidences.unsqueeze(-1),next_token_values,out=branches)
             draft_confidences=branches
@@ -191,7 +196,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
         chosen_index=torch.topk(confidences,k=draft_total_token,dim=-1).indices.sort(dim=-1).values
         tensor_tree = pack_tree(full_parents, full_contexts, chosen_index, total_input_ids, draft_token_length,workspace=opd.pack_workspace)
         if hasattr(draft_past_key_values_tree,'crop'):draft_past_key_values_tree.crop(init_kv_len)
-        return {'trees': [], 'trees_chosen_index': None, 'tensor_tree': tensor_tree, 'next_token_trees': total_input_ids.gather(1, chosen_index), 'target_position_ids': total_position_ids.gather(1, chosen_index)}
+        return {'trees': [], 'trees_chosen_index': None, 'tensor_tree': tensor_tree, 'next_token_trees': total_input_ids.gather(1, chosen_index), 'target_position_ids': total_position_ids.gather(1, chosen_index), 'proposal_observation':proposal_observation}
 
     def model_forward(model, input_ids, attention_mask, past_key_values, position_ids=None):
         if hasattr(model, 'base_model'):
@@ -272,6 +277,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
     all_draft_input_states = None
     all_draft_input_ids = None
     attention_mask = attention_mask.cpu()
+    original_prompt_mask = attention_mask if verification_hook is not None else None
     initial_padding=attention_mask.eq(0).to(device)
     position_ids = [torch.sum(item) for item in attention_mask]
     past_position_ids = [item.item() - 1 for item in position_ids]
@@ -298,6 +304,8 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
         total_target_time += time.time() - target_time_start
     (target_next_token, _, prefill_metadata) = sample_target_with_metadata(target_logits, do_sample=do_sample, temperature=temperature, top_p=top_p, top_k=top_k, eos_token_id=eos_token_id)
     del _, prefill_metadata, target_logits
+    if verification_hook is not None:
+        verification_hook.prefill(input_ids,original_prompt_mask,target_next_token,max(1,repeated_generate_nums or 1))
     if (target_next_token==eos_token_id).all():
         from helper.generation_edges import prefill_eos_output
         result=prefill_eos_output(input_ids,feature_states,padding_positions,repeated_generate_nums,eos_token_id,
@@ -512,6 +520,19 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
             emitted_response_tokens += acc_length[0]
             if emitted_response_tokens >= max_new_tokens:
                 end_sig[0] = 1
+        if verification_hook is not None:
+            # The sampler is in canonical order; tree/path/candidates are in
+            # physical KV order after swap-removal. Only the observation is
+            # remapped. Unpadded path lengths exclude scheduler EOS padding.
+            observed_samples = target_next_token_tree if physical_to_canonical is None else target_next_token_tree.index_select(0,physical_to_canonical)
+            length_stop = max(history.lengths['generated_ids']+input_ids.shape[-1]-pad_counts[i]+acc_length[i]
+                              for i in range(bsz)) >= max_length
+            verification_hook.packed_verification(tree=tensor_tree,proposals=outputs['proposal_observation'],
+                sampled=observed_samples,path=path,canonical=residual_index,
+                round_index=verification_batches-1,past_kv_len=past_kv_len,active=bsz,
+                draft_k=draft_k,budget=draft_total_token,depth_limit=draft_token_length,
+                capped=length_stop or (max_new_tokens is not None and emitted_response_tokens>=max_new_tokens))
+            del observed_samples
         for idx_tree,length in enumerate(acc_length):
             pad_counts[idx_tree]+=sum(index>=0 for index in scheduling_packet[idx_tree][3:])
             total_proposed_draft_tokens+=draft_total_token

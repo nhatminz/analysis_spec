@@ -1,0 +1,106 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+{"edge": "ordinary", "async_update": false, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 48, "misses": 48, "rounds": 13, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 14}, {"fast_lr": 0.01, "ordinary_events": 48, "misses": 48, "rounds": 13, "B_final_norm": 0.0007928678533062339, "updates": 13.0, "target_forwards": 14}]}
+.OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+{"edge": "ordinary", "async_update": true, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 48, "misses": 48, "rounds": 13, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 14}, {"fast_lr": 0.01, "ordinary_events": 48, "misses": 48, "rounds": 13, "B_final_norm": 0.0007928678533062339, "updates": 13.0, "target_forwards": 14}]}
+.OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+{"edge": "swap_removal", "async_update": false, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 24, "misses": 24, "rounds": 13, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 14}, {"fast_lr": 0.01, "ordinary_events": 24, "misses": 24, "rounds": 13, "B_final_norm": 0.0011373109882697463, "updates": 13.0, "target_forwards": 14}]}
+.OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+{"edge": "swap_removal", "async_update": true, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 24, "misses": 24, "rounds": 13, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 14}, {"fast_lr": 0.01, "ordinary_events": 24, "misses": 24, "rounds": 13, "B_final_norm": 0.0011373109882697463, "updates": 13.0, "target_forwards": 14}]}
+.{"edge": "all_eos", "async_update": false, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 0, "misses": 0, "rounds": 0, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 1}, {"fast_lr": 0.01, "ordinary_events": 0, "misses": 0, "rounds": 0, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 1}]}
+.{"edge": "all_eos", "async_update": true, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 0, "misses": 0, "rounds": 0, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 1}, {"fast_lr": 0.01, "ordinary_events": 0, "misses": 0, "rounds": 0, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 1}]}
+.OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+{"edge": "verified_eos", "async_update": false, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 36, "misses": 36, "rounds": 13, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 14}, {"fast_lr": 0.01, "ordinary_events": 36, "misses": 36, "rounds": 13, "B_final_norm": 0.0028698022942990065, "updates": 13.0, "target_forwards": 14}]}
+.OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+OPD proposal mode: auto
+profile: NONE (uncalibrated fallback)
+GPU: NVIDIA GeForce RTX 3090 cc[8, 6]
+V: 97
+rank: 8
+dtype: torch.bfloat16
+kernel hash: 6259664bc5ef819c58cfdb0d307b8732574179f632795c7c2fe691959e112a1c
+{"edge": "verified_eos", "async_update": true, "diagnostics": [{"fast_lr": 0.0, "ordinary_events": 36, "misses": 36, "rounds": 13, "B_final_norm": 0.0, "updates": 0.0, "target_forwards": 14}, {"fast_lr": 0.01, "ordinary_events": 36, "misses": 36, "rounds": 13, "B_final_norm": 0.0028698022942990065, "updates": 13.0, "target_forwards": 14}]}
+.
+=============================== warnings summary ===============================
+tests/test_rq2_repeated_misses_cuda.py::test_actual_spark_logging_passive_off_on_reset_and_frozen[ordinary-False]
+tests/test_rq2_repeated_misses_cuda.py::test_actual_spark_logging_passive_off_on_reset_and_frozen[ordinary-True]
+tests/test_rq2_repeated_misses_cuda.py::test_actual_spark_logging_passive_off_on_reset_and_frozen[swap_removal-False]
+tests/test_rq2_repeated_misses_cuda.py::test_actual_spark_logging_passive_off_on_reset_and_frozen[swap_removal-True]
+tests/test_rq2_repeated_misses_cuda.py::test_actual_spark_logging_passive_off_on_reset_and_frozen[verified_eos-False]
+tests/test_rq2_repeated_misses_cuda.py::test_actual_spark_logging_passive_off_on_reset_and_frozen[verified_eos-True]
+  /mnt/hdd/nhatminh/SpecDecode/analysis_spec/helper/opd_reflex.py:180: UserWarning: No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.
+    warnings.warn('No exact compatible OPD proposal profile; using UNCALIBRATED safe fallback. Run scripts/tune_opd_proposals.sh; no tuning in hot path.')
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+8 passed, 6 warnings in 11.36s

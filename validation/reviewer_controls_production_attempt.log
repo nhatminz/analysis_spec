@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/run_reviewer_controls.py", line 23, in <module>
+    if __name__=='__main__':main()
+                            ^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/run_reviewer_controls.py", line 20, in main
+    print(json.dumps(analyze(a.root,a.steps,a.output_dir,a.bootstrap_samples,a.permutations,a.seed,a.allow_partial),indent=2))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/reviewer_controls/offline.py", line 225, in analyze
+    loaded, plan, inputs, availability = read_collection(root,steps,allow_partial)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/reviewer_controls/offline.py", line 29, in read_collection
+    raise FileNotFoundError(f'Existing collection unavailable: {collection}; no collection will be generated')
+FileNotFoundError: Existing collection unavailable: /mnt/hdd/nhatminh/SpecDecode/analysis_spec/outputs/e2_e6_fastgrpo/collection; no collection will be generated

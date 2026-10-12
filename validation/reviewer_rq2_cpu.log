@@ -1,0 +1,18 @@
+....................s.............sss...ssssssssss....ssssssssssssssssss [ 32%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss [ 65%]
+ssssssssssssssssssssssssssssssssssssssssssssssssssss....sssss........... [ 97%]
+.....                                                                    [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_e2e6_external.py:103: CUDA FastGRPO generation
+SKIPPED [1] tests/test_opd_reflex.py:152: CUDA retained zero-row identity
+SKIPPED [2] tests/test_opd_reflex.py:168: native BF16 selected-row head oracle
+SKIPPED [10] tests/test_opd_revision.py:40: exact adaptive CUDA GEMM/sparse parity
+SKIPPED [96] tests/test_opd_sampling_finite.py:41: CUDA sampler parity
+SKIPPED [2] tests/test_opd_sampling_finite.py:64: CUDA sampler parity
+SKIPPED [24] tests/test_opd_sampling_finite.py:80: CUDA sampler parity
+SKIPPED [12] tests/test_opd_sampling_finite.py:104: CUDA sampler parity
+SKIPPED [4] tests/test_opd_sampling_finite.py:147: CUDA sampler parity
+SKIPPED [4] tests/test_opd_sampling_finite.py:163: CUDA sampler parity
+SKIPPED [3] tests/test_opd_sampling_finite.py:199: CUDA sampler parity
+SKIPPED [2] tests/test_opd_sampling_finite.py:216: CUDA sampler parity
+60 passed, 161 skipped in 42.99s
