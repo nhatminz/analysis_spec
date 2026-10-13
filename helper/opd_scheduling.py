@@ -12,7 +12,7 @@ def schedule(path,past,eos,workspace,packet,kernels=None,opd=None):
         # Async retains the pre-update snapshot to preserve overlap, never races
         # a concurrent active_count mutation or adds a wait for dispatch alone.
         reflex=opd is not None and getattr(opd,'enabled',True)
-        snapshot=(opd.dispatch_snapshot if getattr(opd,'async_updates',False) else opd.active_count) if reflex else None
+        snapshot=(opd.dispatch_snapshot if getattr(opd,'async_updates',False) else getattr(opd,'dispatch_count',opd.active_count)) if reflex else None
         kernels.pad_schedule(path,past,eos,tokens,indices,mask,last,out_packet,snapshot=snapshot)
         if reflex:
             rows=packet[:b,:capacity+4].cpu().tolist()

@@ -76,7 +76,12 @@ def _cache_seq_length(cache):
     return int(key.shape[-2])
 
 @torch.inference_mode()
-def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=False, repeated_generate_nums=None, temperature=0.8, top_p=0.9, top_k=None, verification_capacity=160, max_draft_token_length=5, max_draft_k=8, max_verification_num=160, min_draft_token_length=3, draft_token_length_c=0.75, statistical_time=False, return_all_draft_input=False, max_length=2048, method='opd_reflex', opd_rank=8, opd_topk=16, opd_fast_lr=0.01, opd_visited_weight=1.0, opd_frontier_weight=1.0, opd_update_stream=True, opd_profile=False, opd_diagnostics=False, opd_backend='auto', opd_train_projector=False, kv_gather_strategy='stacked', max_new_tokens=None, verification_hook=None):
+def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=False, repeated_generate_nums=None, temperature=0.8, top_p=0.9, top_k=None, verification_capacity=160, max_draft_token_length=5, max_draft_k=8, max_verification_num=160, min_draft_token_length=3, draft_token_length_c=0.75, statistical_time=False, return_all_draft_input=False, max_length=2048, method='opd_reflex', opd_rank=8, opd_topk=16, opd_fast_lr=0.01, opd_visited_weight=1.0, opd_frontier_weight=1.0, opd_update_stream=True, opd_profile=False, opd_diagnostics=False, opd_backend='auto', opd_train_projector=False, kv_gather_strategy='stacked', max_new_tokens=None, verification_hook=None, opd_b_sharing_scope='rollout_batch'):
+    if opd_b_sharing_scope not in ('rollout_batch','per_prompt_group'):
+        raise ValueError('Invalid OPD correction sharing scope')
+    per_prompt=opd_b_sharing_scope=='per_prompt_group'
+    if per_prompt and opd_train_projector:
+        raise ValueError('Per-prompt evaluation requires frozen checkpoint A')
     if max_new_tokens is not None:
         if input_ids.shape[0] != 1 or (repeated_generate_nums or 1) != 1 or max_new_tokens < 2:
             raise ValueError('Exact response cap is supported only for single-response evaluation, cap >= 2')
@@ -312,6 +317,10 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
                                   return_all_draft_input,time.perf_counter()-start_time)
         result.update({name:0. for name in OPD_COUNTER_NAMES})
         result.update(opd_final_b_norm=0.,opd_final_b_max_abs=0.,opd_backend='triton')
+        if per_prompt:
+            result.update(opd_b_sharing_scope='per_prompt_group',opd_initial_b_norm=0.,
+                opd_group_b_norms=[0.]*input_ids.shape[0],opd_group_updates=[0]*input_ids.shape[0],
+                opd_group_feedback_weight=[0.]*input_ids.shape[0])
         target_past_key_values.end_rollout(max_retained_tokens)
         return result
     draft_input_ids = torch.concat([input_ids[:, 1:], target_next_token], dim=-1)
@@ -391,13 +400,19 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
         cache = getattr(model, '_opd_runtime_cache', None)
         if cache is None:cache={};model._opd_runtime_cache=cache
         key=(enabled,opd_rank,opd_topk,opd_fast_lr,opd_visited_weight,opd_frontier_weight,opd_profile,opd_diagnostics,opd_backend,opd_train_projector)
+        if per_prompt:key=key+('per_prompt_group',)
         opd=cache.get(key)
         if opd is None:
             cache.clear()
-            opd=OPDReflex(opd_rank,opd_topk,opd_fast_lr,opd_visited_weight,opd_frontier_weight,
+            runtime_type=OPDReflex
+            if per_prompt:
+                from rq2.per_prompt import PerPromptReflex
+                runtime_type=PerPromptReflex
+            opd=runtime_type(opd_rank,opd_topk,opd_fast_lr,opd_visited_weight,opd_frontier_weight,
                          opd_profile,opd_diagnostics,enabled,opd_backend,opd_train_projector)
             cache[key]=opd
-    opd.start(model, bsz, vocabulary_ids, draft_hidden_states.shape[-1], max_contexts=1 + max_draft_k * (max_draft_token_length - 1), max_nodes=max(verification_capacity+bsz,2*bsz), max_path=max_draft_token_length + 1, max_proposal_contexts=max_draft_k)
+    group_layout=dict(prompt_groups=input_ids.shape[0],responses_per_prompt=repeated_generate_nums or 1,canonical=residual_index) if per_prompt else {}
+    opd.start(model, bsz, vocabulary_ids, draft_hidden_states.shape[-1], max_contexts=1 + max_draft_k * (max_draft_token_length - 1), max_nodes=max(verification_capacity+bsz,2*bsz), max_path=max_draft_token_length + 1, max_proposal_contexts=max_draft_k,**group_layout)
     opd.async_updates=update_stream is not None
     mask_columns_capacity = input_ids.shape[-1] + max_length * (max_draft_token_length + 1) + max_verification_num
     model._opd_initial_batch=bsz;model._opd_max_path_capacity=max_draft_token_length+1
@@ -588,6 +603,7 @@ def speculative_generate(model, input_ids, attention_mask, tokenizer, do_sample=
             padding_positions_tensor=padding_positions_tensor.index_select(0,keep)
             past_position_ids_tensor=past_position_ids_tensor.index_select(0,keep)
             residual_index = [residual_index[row] for row in keep_rows]
+            if per_prompt:opd.set_response_order(residual_index)
             chosen_index = chosen_index.index_select(0, keep)
             if static_kv:
                 target_past_key_values.swap_remove(len(keep_rows),sources,destinations)

@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/run_rq2_aal_progress.py", line 72, in <module>
+    if __name__=='__main__':main()
+                            ^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/run_rq2_aal_progress.py", line 53, in main
+    output,rows,tok,state,manifest=prepare(c,a.output_dir)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/rq2/aal_progress.py", line 158, in prepare
+    state,preflight=checkpoint_preflight(c)
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/hdd/nhatminh/SpecDecode/analysis_spec/rq2/aal_progress.py", line 134, in checkpoint_preflight
+    raise FileNotFoundError(f'Required read-only SPARK checkpoint is unavailable: {c.checkpoint_path}. No GPU model was loaded.')
+FileNotFoundError: Required read-only SPARK checkpoint is unavailable: /workspace/storage-shared/nlp/minhpn19/SpecNaacl/outputs/train/qwen25_3b/qwen25_3b__simplelr__method-opd_reflex__seed42__20261008T104039__3885bd48/checkpoints/resume/step234_epoch2_batch0.pt. No GPU model was loaded.

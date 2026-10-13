@@ -170,13 +170,17 @@ class FastGRPOModel(Model):
         prepare_target_decoder_api(target_model)
         super().__init__(config, target_model, path=path)
 
-    def enable_opd(self, rank=8):
+    def enable_opd(self, rank=8, *, projector=None):
         from helper.opd_reflex import initialize_projector
         if hasattr(self.draft_model, 'opd_projector'):
             raise ValueError('OPD already initialized')
         device = self.lm_head.weight.device
-        self.draft_model.register_parameter('opd_projector', nn.Parameter(
-            initialize_projector(self.draft_model.hidden_size, rank, head=self.lm_head.weight).to(device)))
+        if projector is None:
+            projector=initialize_projector(self.draft_model.hidden_size, rank, head=self.lm_head.weight)
+        elif (tuple(projector.shape)!=(self.draft_model.hidden_size,rank)
+              or not torch.isfinite(projector).all()):
+            raise ValueError('Invalid checkpoint projector shape/values')
+        self.draft_model.register_parameter('opd_projector', nn.Parameter(projector.detach().to(device=device,dtype=torch.float32).clone()))
         self.draft_model.register_buffer('opd_projector_grad_sum', torch.zeros_like(self.opd_projector), persistent=False)
         self.draft_model.register_buffer('opd_projector_grad_weight', torch.zeros(1,device=device), persistent=False)
         self.register_buffer('full_vocabulary_ids', torch.arange(self.draft_model.vocab_size,device=device), persistent=False)

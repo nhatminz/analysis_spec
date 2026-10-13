@@ -1,0 +1,14 @@
+{
+  "command": [
+    "/mnt/hdd/nhatminh/.specnaacl-env-modern/bin/python",
+    "run_rq2_aal_progress.py",
+    "check"
+  ],
+  "exit_code": 1,
+  "runtime_s": 3.15036663133651,
+  "checkpoint_available": false,
+  "production_checkpoint_validated": false,
+  "GPU_model_loaded": false,
+  "reason": "Required B200 checkpoint path is not mounted on this local workstation",
+  "production_rollouts_run": 0
+}
