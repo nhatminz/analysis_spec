@@ -117,3 +117,38 @@ def test_real_tiny_pipeline_smoke_commit_and_resume(tmp_path):
     assert second['status']=='complete'
     assert all(p.stat().st_mtime_ns==stamp for p,stamp in stamps.items())
     assert not (output/'collection').exists()  # Smoke never masquerades as 20 production rollouts.
+
+
+@pytest.mark.parametrize('async_update',[False,True])
+def test_real_peaked_draft_kl_inf_collects_both_arms_and_replays_identically(tmp_path,async_update):
+    """Reproduce the old fatal KL guard in actual Qwen/Triton generation."""
+    from copy import deepcopy
+    from test_motivation_cuda import two_models,conf,TinyTokenizer
+    from e2e6.config import Config
+    from rq2.runtime import run_pair
+    c=Config(smoke=True,batch_size=2,responses_per_prompt=2,eval_rollouts=20,max_length=17,
+        verification_capacity=28,max_verification_num=7,max_draft_k=2,
+        max_draft_token_length=3,min_draft_token_length=3)
+    model,*_=two_models(conf('unused'))
+    # A fixture-only independent head gives the draft a finite, concentrated
+    # distribution while leaving the target sampler's native logits intact.
+    model.lm_head=deepcopy(model.lm_head)
+    with torch.no_grad():
+        model.lm_head.weight.zero_();model.lm_head.bias.zero_();model.lm_head.bias[7]=120.
+    model.requires_grad_(False);before=digest(model.state_dict())
+    rng_before=digest(capture_rng_state())
+    rows=[dict(id=f'test:{i}',question='q') for i in range(2)]
+    manifest=dict(identity_sha256='tiny-peaked-draft',checkpoints={'30':{'fixture':True}})
+    assert run_pair(model,TinyTokenizer(),rows,c,30,0,tmp_path,manifest,16,.01,async_update,replay=True)
+    for arm in ('off','on'):
+        directory=tmp_path/arm/'rollout_0000'
+        assert (directory/'complete.json').is_file()
+        diagnostic=json.loads((directory/'diagnostics.json').read_text())
+        assert diagnostic['opd_nonfinite_kl_states']>0
+        assert diagnostic['opd_invalid_states']==0
+        assert diagnostic['feedback_valid'] and diagnostic['kl_mean'] is None
+        assert diagnostic['logging_token_counter_equivalence']
+        assert (diagnostic['opd_updates']>0)==(arm=='on')
+        assert (diagnostic['opd_final_b_norm']>0)==(arm=='on')
+    assert digest(model.state_dict())==before
+    assert digest(capture_rng_state())==rng_before

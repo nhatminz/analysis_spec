@@ -1,0 +1,134 @@
+{
+  "production_b200_tested": false,
+  "production_checkpoint_tested": false,
+  "user_traceback_counter_values_available": false,
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "torch_cuda": "2.6.0+cu124",
+  "triton": "3.2.0",
+  "torch_cpu": "2.13.0+cpu",
+  "tests": [
+    {
+      "suite": "CPU numerics/RQ2/OPD",
+      "passed": 45,
+      "skipped": 3,
+      "seconds": 4.39
+    },
+    {
+      "suite": "CUDA environment numerics/RQ2/OPD/revision",
+      "passed": 90,
+      "seconds": 29.36
+    },
+    {
+      "suite": "Actual peaked Qwen collect/replay sync+async",
+      "passed": 2,
+      "seconds": 6.87
+    },
+    {
+      "suite": "OPD optimization/cache/profiles",
+      "passed": 61,
+      "seconds": 3.95
+    }
+  ],
+  "tiny_qwen_correctness_fixtures": [
+    {
+      "fixture": "test_real_peaked_draft_kl_inf_0",
+      "arms": {
+        "off": {
+          "B_reset_verified": true,
+          "feedback_valid": true,
+          "frozen_weights_verified": true,
+          "kl_mean": null,
+          "kl_status": "nonfinite_probability_space",
+          "logging_token_counter_equivalence": true,
+          "opd_final_b_max_abs": 0.0,
+          "opd_final_b_norm": 0.0,
+          "opd_invalid_states": 0.0,
+          "opd_kl_sum": 0.0,
+          "opd_nonfinite_kl_states": 156.0,
+          "opd_selected_states": 156.0,
+          "opd_state_weight": 156.0,
+          "opd_updates": 0.0,
+          "projector_sha256": "e548719254ebc5d163deb9206905db01923a16322c336b98348e13ea4a57e7a5",
+          "valid_feedback_available": true,
+          "validation_errors": [],
+          "wall_s": 1.0271013593301177
+        },
+        "on": {
+          "B_reset_verified": true,
+          "feedback_valid": true,
+          "frozen_weights_verified": true,
+          "kl_mean": null,
+          "kl_status": "nonfinite_probability_space",
+          "logging_token_counter_equivalence": true,
+          "opd_final_b_max_abs": 0.06834174692630768,
+          "opd_final_b_norm": 0.11488063633441925,
+          "opd_invalid_states": 0.0,
+          "opd_kl_sum": 0.0,
+          "opd_nonfinite_kl_states": 156.0,
+          "opd_selected_states": 156.0,
+          "opd_state_weight": 156.0,
+          "opd_updates": 13.0,
+          "projector_sha256": "e548719254ebc5d163deb9206905db01923a16322c336b98348e13ea4a57e7a5",
+          "valid_feedback_available": true,
+          "validation_errors": [],
+          "wall_s": 0.15856308490037918
+        }
+      }
+    },
+    {
+      "fixture": "test_real_peaked_draft_kl_inf_1",
+      "arms": {
+        "off": {
+          "B_reset_verified": true,
+          "feedback_valid": true,
+          "frozen_weights_verified": true,
+          "kl_mean": null,
+          "kl_status": "nonfinite_probability_space",
+          "logging_token_counter_equivalence": true,
+          "opd_final_b_max_abs": 0.0,
+          "opd_final_b_norm": 0.0,
+          "opd_invalid_states": 0.0,
+          "opd_kl_sum": 0.0,
+          "opd_nonfinite_kl_states": 156.0,
+          "opd_selected_states": 156.0,
+          "opd_state_weight": 156.0,
+          "opd_updates": 0.0,
+          "projector_sha256": "e548719254ebc5d163deb9206905db01923a16322c336b98348e13ea4a57e7a5",
+          "valid_feedback_available": true,
+          "validation_errors": [],
+          "wall_s": 0.14567545615136623
+        },
+        "on": {
+          "B_reset_verified": true,
+          "feedback_valid": true,
+          "frozen_weights_verified": true,
+          "kl_mean": null,
+          "kl_status": "nonfinite_probability_space",
+          "logging_token_counter_equivalence": true,
+          "opd_final_b_max_abs": 0.06834174692630768,
+          "opd_final_b_norm": 0.11488063633441925,
+          "opd_invalid_states": 0.0,
+          "opd_kl_sum": 0.0,
+          "opd_nonfinite_kl_states": 156.0,
+          "opd_selected_states": 156.0,
+          "opd_state_weight": 156.0,
+          "opd_updates": 13.0,
+          "projector_sha256": "e548719254ebc5d163deb9206905db01923a16322c336b98348e13ea4a57e7a5",
+          "valid_feedback_available": true,
+          "validation_errors": [],
+          "wall_s": 0.15019326005131006
+        }
+      }
+    }
+  ],
+  "changed_source_sha256": {
+    "rq2/runtime.py": "3ace66d3d40213f2e7cc176e91359257fc2d0486fe1f33c580ad81cb18d78c5a",
+    "helper/opd_reflex.py": "4df276640842153862ce3ec563f9bac3c82cc733ed2402f6fe812f9e94cfe6f3",
+    "helper/opd_reflex_kernels.py": "a6b79db6ed263f29e12c993b0cf488187f94fd1ac125f6c8552c0dd13b55f8c4",
+    "tests/test_rq2_feedback_numerics.py": "7291e7353a6cd87100570385606c56dd5fbd9e11387c9521ed1fa5997b14de57",
+    "tests/test_rq2_repeated_misses_cuda.py": "4fe141cb84e8e7186be31af8ac7657e9279dd02a52b7e69375d2a8cabd77217f",
+    "README_REVIEWER_RQ2.md": "c0d0955643de428d0f7656cf20daf68ab4d44aa022364963ff65f7d796f3e65e"
+  },
+  "changes_confined_to": "analysis_spec",
+  "hypothesis_confirmed": false
+}

@@ -404,10 +404,16 @@ class OPDReflex:
             self.active_count.fill_(active.numel());self.active_ids[:active.numel()].copy_(active)
         count=selected.sum();categories=kind.flatten()
         finite=torch.isfinite(kl)
+        # Probability-space KL can be infinite when FP32 q underflows or its
+        # complement rounds to zero. That does not invalidate the finite q-p
+        # update. Track actual invalid feedback independently of KL diagnostics.
+        probabilities_valid=(~valid|(torch.isfinite(p)&(p>=0)&torch.isfinite(qq)&(qq>=0))).all(-1)
+        features_valid=torch.isfinite(u.reshape(-1,self.rank)).all(-1)
+        invalid_feedback=((weights>0)&~good).reshape(-1)|(selected&~(probabilities_valid&features_valid))
         stats=torch.stack((total,count,(selected&(categories==1)).sum(),(selected&(categories==2)).sum(),
             torch.where(selected&finite,w*kl,0.).sum(),(valid&selected[:,None]).sum(),
             torch.where(selected,mass.flatten(),0.).sum(),torch.where(selected,p[:,:k].sum(-1),0.).sum(),
-            ((weights>0)&~good).sum(),((total>0)&(self.fast_lr>0)).float(),self.active_count[0].float(),total.new_tensor(1.),
+            invalid_feedback.sum(),((total>0)&(self.fast_lr>0)).float(),self.active_count[0].float(),total.new_tensor(1.),
             (selected&~finite).sum()))
         self.counters[:13].add_(stats.to(torch.float64))
         self.counters[15]=torch.maximum(self.counters[15],self.active_count[0].double())

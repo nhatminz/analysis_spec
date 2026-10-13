@@ -322,9 +322,9 @@ def _selected_head(SELECTED,SELECTED_COUNT,H,HEAD,BIAS,U,B,D_IDS,D_Q,T_IDS,NORM,
 
 
 @triton.jit(do_not_specialize=["TS0","TS1","TS2","ROWS","CACHE"])
-def _union(SELECTED,SELECTED_COUNT,TARGET,MAP,W,KIND,CONTEXTS,D_IDS,D_Q,T_IDS,T_P,T_Q,MASS,
+def _union(SELECTED,SELECTED_COUNT,TARGET,MAP,W,KIND,CONTEXTS,D_IDS,D_Q,T_IDS,T_P,T_Q,MASS,U,
             OUT_IDS,OUT_G,STATS,DRAFT_P,ROW_MAP,TS0,TS1,TS2,ROWS,CACHE,
-            V:tl.constexpr,K:tl.constexpr,FIELDS:tl.constexpr,BU:tl.constexpr,GREEDY:tl.constexpr,
+            V:tl.constexpr,K:tl.constexpr,R:tl.constexpr,FIELDS:tl.constexpr,BU:tl.constexpr,GREEDY:tl.constexpr,
             COMPACT:tl.constexpr,HAS_ROW_MAP:tl.constexpr):
     worker=tl.program_id(0);stride=tl.num_programs(0)
     count=tl.load(SELECTED_COUNT)
@@ -377,7 +377,17 @@ def _union(SELECTED,SELECTED_COUNT,TARGET,MAP,W,KIND,CONTEXTS,D_IDS,D_Q,T_IDS,T_
         tl.store(STATS+state*FIELDS+5,tl.sum(valid.to(tl.float32),axis=0))
         tl.store(STATS+state*FIELDS+6,tl.where(selected,mass,0.))
         tl.store(STATS+state*FIELDS+7,tl.sum(tl.where(first,p,0.),axis=0))
-        tl.store(STATS+state*FIELDS+8,((weight>0)&~good).to(tl.float32))
+        # Infinite diagnostic KL is possible with finite q-p gradients (q=0
+        # by underflow, or a rounded-zero tail). Reject actual bad feedback,
+        # including invalid draft probabilities/features, separately.
+        p_ok=(p==p)&(tl.abs(p)<float('inf'))&(p>=0)
+        q_ok=(q==q)&(tl.abs(q)<float('inf'))&(q>=0)
+        probabilities_ok=tl.sum((valid&~(p_ok&q_ok)).to(tl.int32),axis=0)==0
+        r=tl.arange(0,triton.next_power_of_2(R))
+        u=tl.load(U+cache*R+r,r<R,other=0.)
+        features_ok=tl.sum(((u!=u)|(tl.abs(u)==float('inf'))).to(tl.int32),axis=0)==0
+        invalid=((weight>0)&~good)|(selected&~(probabilities_ok&features_ok))
+        tl.store(STATS+state*FIELDS+8,invalid.to(tl.float32))
         tl.store(STATS+state*FIELDS+9,(selected&~finite).to(tl.float32))
 
 
@@ -581,8 +591,8 @@ def feedback(state,tree,path,target,greedy=False,sampling_metadata=None):
     strides=(0,0,0) if compact else (*target.stride()[:2],0 if greedy else target.stride(2))
     draft_p=sampling_metadata[3] if compact else state.teacher_draft_p
     _union[(min(n,32),)](state.selected_ids,state.selected_count,draft_p if compact else target,state.mapping,weights,kind,tree.feedback_contexts,state.ids_cache,state.q_cache,ids,probs,
-        state.teacher_q,mass,state.union_ids,state.union_g,state.state_stats,
-        draft_p,row_map,*strides,q,state.cache_contexts,state.vocab,k,10,
+        state.teacher_q,mass,state.u_cache,state.union_ids,state.union_g,state.state_stats,
+        draft_p,row_map,*strides,q,state.cache_contexts,state.vocab,k,rank,10,
         triton.next_power_of_2(2*k),greedy,compact,row_map is not None,num_warps=4,enable_fp_fusion=False)
     _reduce[(10,)](state.state_stats,state.round_weight,state.counters,n,10,triton.next_power_of_2(n),num_warps=4)
     if state.train_projector and state._ever_updated:

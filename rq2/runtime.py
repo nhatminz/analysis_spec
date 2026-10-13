@@ -2,6 +2,7 @@
 from pathlib import Path
 import importlib.metadata
 import json
+import math
 import random
 import time
 import torch
@@ -114,6 +115,34 @@ def frozen_digest(model):
     return digest(dict(target=target_state(model.target_model),draft=model.draft_model.state_dict()))
 
 
+def feedback_diagnostics(output):
+    """Validate updates, not the finiteness of a probability-space KL metric.
+
+    The existing kernels deliberately count nonfinite KL separately and sum
+    only finite KL terms. Never report that partial sum as an overall mean.
+    Inspect only the existing end-of-rollout scalar packet; no model pass,
+    dense probability transfer, or change to sampling/update math is needed.
+    """
+    fields=('opd_updates','opd_state_weight','opd_selected_states','opd_final_b_norm',
+            'opd_final_b_max_abs','opd_invalid_states','opd_nonfinite_kl_states','opd_kl_sum')
+    errors=[];record={}
+    for name in fields:
+        value=float(output[name])
+        record[name]=value if math.isfinite(value) else str(value)
+        if not math.isfinite(value):errors.append(f'{name}={value}')
+        elif name!='opd_kl_sum' and value<0:errors.append(f'{name}={value} is negative')
+    if output['opd_invalid_states']>0:
+        errors.append('invalid teacher mass, probabilities or correction features')
+    if output['opd_nonfinite_kl_states']>output['opd_selected_states']:
+        errors.append('nonfinite KL count exceeds selected states')
+    weight=output['opd_state_weight']
+    nonfinite_kl=output['opd_nonfinite_kl_states']>0
+    record.update(feedback_valid=not errors,validation_errors=errors,
+                  kl_status='nonfinite_probability_space' if nonfinite_kl else ('finite' if weight>0 else 'no_feedback'),
+                  kl_mean=None if errors or nonfinite_kl or weight<=0 else output['opd_kl_sum']/weight)
+    return record
+
+
 def run_pair(model, tokenizer, rows, c, step, rollout, destination, manifest,
              topk, fast_lr, update_stream, replay=False, deadline=float('inf'), stop=None):
     from helper.opd_generate import speculative_generate
@@ -133,7 +162,15 @@ def run_pair(model, tokenizer, rows, c, step, rollout, destination, manifest,
             output=speculative_generate(model=model,tokenizer=tokenizer,**batch,verification_hook=observer,**kwargs)
         torch.cuda.synchronize();runtime=time.perf_counter()-start
         observer.validate(output)
-        if output['opd_nonfinite_kl_states'] or output['opd_invalid_states']:raise RuntimeError('Invalid real SPARK verification feedback')
+        diagnostic=feedback_diagnostics(output)
+        if not diagnostic['feedback_valid']:
+            failure_path=directory/'failure.json'
+            atomic_json(failure_path,dict(**diagnostic,checkpoint_step=step,rollout_id=rollout,
+                arm=arm,seed=seed,wall_s=runtime))
+            raise RuntimeError(f'Invalid real SPARK verification feedback: step={step}, rollout={rollout}, '
+                f'arm={arm}, invalid_states={output["opd_invalid_states"]}, '
+                f'nonfinite_kl_states={output["opd_nonfinite_kl_states"]}; '
+                f'{"; ".join(diagnostic["validation_errors"])}. Details: {failure_path}')
         if arm=='off' and (output['opd_final_b_norm']!=0 or output['opd_updates']!=0):raise RuntimeError('OFF updated B')
         # Some legitimate rollouts (e.g. all prefill EOS) contain no feedback.
         feedback_available=output['opd_state_weight']>0
@@ -156,8 +193,6 @@ def run_pair(model, tokenizer, rows, c, step, rollout, destination, manifest,
         atomic_json(directory/'responses.json',dict(tokens=output['generated_token_ids'],eos_token_id=tokenizer.eos_token_id,
             counters=counters(output),prompt_ids=[r['id'] for r in rows],seed=seed,arm=arm,
             initial_weights_sha256=initial,projector_sha256=digest(model.opd_projector)))
-        diagnostic={key:output[key] for key in ('opd_updates','opd_state_weight','opd_selected_states','opd_final_b_norm',
-                                              'opd_final_b_max_abs','opd_invalid_states','opd_nonfinite_kl_states')}
         atomic_json(directory/'diagnostics.json',dict(**diagnostic,wall_s=runtime,
             logging_token_counter_equivalence=equivalent,B_reset_verified=True,frozen_weights_verified=True,
             valid_feedback_available=feedback_available,projector_sha256=digest(model.opd_projector)))

@@ -122,6 +122,17 @@ Repeat the same command to resume; existing valid commits are not rewritten.
 Changing checkpoint/config/code identity requires a new output directory.
 Re-running `all` analyzes all completed pairs, including safe partial results.
 
+Feedback validation distinguishes nonfinite probability-space KL from invalid
+updates. A peaked draft may have token probabilities that underflow to zero or
+a tail `1 - sum(q_union)` that rounds to zero, making diagnostic KL infinite
+while the `q - p` update remains finite. Such rollouts retain
+`opd_nonfinite_kl_states` and report `kl_mean: null` in `diagnostics.json`; the
+finite-only KL sum is never presented as an overall mean. Invalid teacher mass,
+nonfinite/negative union probabilities, nonfinite correction features or a
+nonfinite final B still abort collection. Details are saved to the failing
+arm's `failure.json`, with no `complete.json` commit. These checks do not clamp
+probabilities, change the target sampler, or add a model forward pass.
+
 To smoke only or analyze saved RQ2 logs without any GPU model:
 
 ```bash
